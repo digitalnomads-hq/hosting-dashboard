@@ -1117,6 +1117,8 @@ def export_csv():
 # Entry point
 # ---------------------------------------------------------------------------
 
+# Ensure DB is initialised whether run directly or via gunicorn
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True, port=5050, use_reloader=False)
