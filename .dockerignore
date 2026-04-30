@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+sites.db
+*.csv
+.env
+.git

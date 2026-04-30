@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DNHQ Hosting Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: { 900: '#0f172a', 800: '#1e293b', 700: '#334155' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Provider badges */
+    .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
+
+    .host-cloudways { background:#e0f2fe; color:#0369a1; }
+    .host-kinsta    { background:#f3e8ff; color:#7e22ce; }
+    .host-external  { background:#f1f5f9; color:#475569; }
+    .host-unknown   { background:#fef9c3; color:#854d0e; }
+
+    .dns-cloudflare   { background:#fff7ed; color:#c2410c; }
+    .dns-cloudns      { background:#ecfdf5; color:#065f46; }
+    .dns-aws-route53  { background:#fefce8; color:#854d0e; }
+    .dns-google       { background:#eff6ff; color:#1d4ed8; }
+    .dns-unknown      { background:#f8fafc; color:#64748b; }
+    .dns-default      { background:#f1f5f9; color:#475569; }
+
+    .expiry-danger  { color: #dc2626; font-weight: 600; }
+    .expiry-warning { color: #d97706; font-weight: 600; }
+
+    .uptime-up      { background:#dcfce7; color:#166534; }
+    .uptime-down    { background:#fee2e2; color:#991b1b; }
+    .uptime-unknown { background:#f1f5f9; color:#94a3b8; }
+
+    .tw-assignee-mitch   { background:#dbeafe; color:#1e40af; }
+    .tw-assignee-hayden  { background:#fef3c7; color:#92400e; }
+    .tw-assignee-shaun   { background:#dcfce7; color:#166534; }
+    .tw-assignee-kyla    { background:#fce7f3; color:#9d174d; }
+    .tw-assignee-new\ hosting\ clients { background:#f1f5f9; color:#475569; }
+
+    /* Sortable table headers */
+    th[data-sort] { cursor: pointer; user-select: none; }
+    th[data-sort]:hover { background: #f1f5f9; }
+    th[data-sort].sorted-asc  span.sort-icon::after { content: ' ↑'; }
+    th[data-sort].sorted-desc span.sort-icon::after { content: ' ↓'; }
+
+    /* Smooth modal */
+    .modal-backdrop { transition: opacity 0.15s ease; }
+    .modal-box      { transition: transform 0.15s ease, opacity 0.15s ease; }
+
+    /* Table row hover */
+    tbody tr:hover { background: #f8fafc; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans text-slate-800">
+
+<!-- ============================================================
+     HEADER
+============================================================ -->
+<header class="bg-navy-900 text-white shadow-lg sticky top-0 z-20">
+  <div class="w-full px-6 py-4 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <svg class="w-7 h-7 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/>
+      </svg>
+      <div>
+        <h1 class="text-xl font-bold leading-tight tracking-tight">DNHQ Hosting Dashboard</h1>
+        <p class="text-xs text-slate-400 mt-0.5">
+          {{ total }} site{{ 's' if total != 1 else '' }}
+          {% if last_updated %}· Updated {{ last_updated }}{% else %}· No data yet{% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button onclick="openAddModal()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-lg transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+        Add Site
+      </button>
+      <a href="/export.csv"
+         class="flex items-center gap-1.5 px-4 py-2 bg-slate-500 hover:bg-slate-400 text-white text-sm font-medium rounded-lg transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        Export CSV
+      </a>
+      <button id="uptime-btn" onclick="startUptimeCheck()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Check Uptime
+      </button>
+      <button id="teamwork-btn" onclick="startTeamworkSync()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm font-medium rounded-lg transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+        </svg>
+        Sync Teamwork
+      </button>
+      <button id="backfill-btn" onclick="startBackfill()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-slate-500 hover:bg-slate-400 text-white text-sm font-medium rounded-lg transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12h6m-3-3v6m-7 4h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        Fill Registrars
+      </button>
+      <button id="refresh-btn" onclick="startRefresh()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-lg transition">
+        <svg id="refresh-icon" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+        </svg>
+        Refresh All
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     STATS BAR
+============================================================ -->
+<div class="w-full px-6 py-5">
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+
+    <!-- Total (resets filter) -->
+    <div onclick="setProviderFilter('')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all col-span-2 sm:col-span-1"
+         data-provider="">
+      <div class="text-3xl font-bold text-slate-800">{{ total }}</div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">All Sites</div>
+    </div>
+
+    {% for provider, count in providers.items() %}
+    <div onclick="setProviderFilter('{{ provider }}')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all"
+         data-provider="{{ provider }}">
+      <div class="flex items-center justify-between">
+        <div class="text-3xl font-bold text-slate-800">{{ count }}</div>
+        <span class="badge host-{{ provider | lower }}">{{ provider }}</span>
+      </div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">{{ provider }}</div>
+    </div>
+    {% endfor %}
+
+  </div>
+</div>
+
+<!-- ============================================================
+     TABLE
+============================================================ -->
+<div class="w-full px-6 pb-16">
+  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+
+    <!-- Toolbar -->
+    <div class="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
+      <div class="relative flex-1 max-w-sm">
+        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none"
+             viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 16.65z"/>
+        </svg>
+        <input id="search" type="text" placeholder="Search domains, hosts, registrars…"
+               oninput="filterTable()"
+               class="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg
+                      focus:outline-none focus:ring-2 focus:ring-sky-400 bg-slate-50" />
+      </div>
+
+      <!-- Provider filter -->
+      <select id="provider-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All Hosts</option>
+        {% for provider in providers.keys() %}
+        <option value="{{ provider }}">{{ provider }}</option>
+        {% endfor %}
+      </select>
+
+      <!-- Team member filter -->
+      <select id="assignee-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All Team</option>
+        <option value="mitch">Mitch</option>
+        <option value="hayden">Hayden</option>
+        <option value="shaun">Shaun</option>
+        <option value="kyla">Kyla</option>
+      </select>
+
+      <!-- Uptime filter -->
+      <select id="uptime-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All Status</option>
+        <option value="up">🟢 Up</option>
+        <option value="down">🔴 Down</option>
+        <option value="unknown">⚪ Not checked</option>
+      </select>
+
+      <!-- Staging toggle -->
+      <label class="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none whitespace-nowrap">
+        <div class="relative">
+          <input type="checkbox" id="show-staging" onchange="filterTable()" class="sr-only peer" />
+          <div class="w-8 h-4 bg-slate-200 rounded-full peer-checked:bg-sky-500 transition-colors"></div>
+          <div class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></div>
+        </div>
+        Show staging
+      </label>
+
+      <!-- Teamwork filter toggle -->
+      <label class="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none whitespace-nowrap">
+        <div class="relative">
+          <input type="checkbox" id="teamwork-only" onchange="filterTable()" class="sr-only peer" />
+          <div class="w-8 h-4 bg-slate-200 rounded-full peer-checked:bg-green-500 transition-colors"></div>
+          <div class="absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></div>
+        </div>
+        Teamwork only
+      </label>
+
+      <span id="visible-count" class="text-xs text-slate-400 ml-auto whitespace-nowrap">
+        Showing {{ total }} sites
+      </span>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="sites-table">
+        <thead>
+          <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
+            <th data-sort="name"   class="px-4 py-3 text-left font-semibold">
+              Site <span class="sort-icon"></span>
+            </th>
+            <th data-sort="host"   class="px-4 py-3 text-left font-semibold">
+              Host <span class="sort-icon"></span>
+            </th>
+            <th data-sort="ip"     class="px-4 py-3 text-left font-semibold">
+              IP Address <span class="sort-icon"></span>
+            </th>
+            <th data-sort="dns"    class="px-4 py-3 text-left font-semibold">
+              DNS <span class="sort-icon"></span>
+            </th>
+            <th                    class="px-4 py-3 text-left font-semibold">Nameservers</th>
+            <th data-sort="reg"    class="px-4 py-3 text-left font-semibold">
+              Registrar <span class="sort-icon"></span>
+            </th>
+            <th data-sort="expiry" class="px-4 py-3 text-left font-semibold">
+              Expiry <span class="sort-icon"></span>
+            </th>
+            <th class="px-4 py-3 text-left font-semibold">Teamwork</th>
+            <th class="px-4 py-3 text-left font-semibold w-10"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" id="table-body">
+
+          {% if sites %}
+            {% for site in sites %}
+            <tr class="site-row transition-colors"
+                data-domain="{{ site.domain }}"
+                data-name="{{ site.name | lower }}"
+                data-host="{{ site.hosting_provider | lower }}"
+                data-ip="{{ site.ip_address }}"
+                data-dns="{{ site.dns_provider | lower }}"
+                data-reg="{{ (site.registrar or '') | lower }}"
+                data-expiry="{{ site.expiry_date or '' }}"
+                data-manual="{{ site.is_manual }}"
+                data-staging="{{ '1' if 'cloudwaysapps.com' in site.domain else '0' }}"
+                data-teamwork="{{ '1' if site.teamwork_task_id else '0' }}"
+                data-assignee="{{ (site.teamwork_assignee or '') | lower }}"
+                data-uptime="{{ site.uptime_status or 'unknown' }}">
+
+              <!-- Site -->
+              <td class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full flex-shrink-0
+                    {% if site.uptime_status == 'up' %}bg-green-400
+                    {% elif site.uptime_status == 'down' %}bg-red-500
+                    {% else %}bg-slate-300{% endif %}"
+                    title="{% if site.uptime_status == 'up' %}Online{% elif site.uptime_status == 'down' %}Down{% else %}Not checked{% endif %}">
+                  </span>
+                  <span class="font-semibold text-slate-800">{{ site.name }}</span>
+                </div>
+                <a href="https://{{ site.domain }}" target="_blank" rel="noopener"
+                   class="text-xs text-sky-600 hover:text-sky-800 hover:underline flex items-center gap-0.5 mt-0.5">
+                  {{ site.domain }}
+                  <svg class="w-3 h-3 inline" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4
+                             M14 4h6m0 0v6m0-6L10 14"/>
+                  </svg>
+                </a>
+                {% if site.notes %}
+                <p class="text-xs text-slate-400 mt-0.5 italic">{{ site.notes }}</p>
+                {% endif %}
+              </td>
+
+              <!-- Host -->
+              <td class="px-4 py-3">
+                <span class="badge host-{{ site.hosting_provider | lower }}">
+                  {{ site.hosting_provider }}
+                </span>
+                {% if site.hosting_provider in ('Cloudways', 'Kinsta') %}
+                <span class="badge ml-1" style="background:#dcfce7;color:#166534;">DNHQ Hosted</span>
+                {% endif %}
+                {% if site.server_name %}
+                <div class="text-xs text-slate-400 mt-1">{{ site.server_name }}</div>
+                {% endif %}
+              </td>
+
+              <!-- IP -->
+              <td class="px-4 py-3" data-cell="ip">
+                <span class="font-mono text-xs text-slate-700 bg-slate-100 px-2 py-0.5 rounded select-all ip-val">
+                  {{ site.ip_address or '—' }}
+                </span>
+                {% if site.ip_org %}
+                <div class="text-xs text-slate-400 mt-1 truncate max-w-[160px] ip-org" title="{{ site.ip_org }}">
+                  {{ site.ip_org }}
+                </div>
+                {% else %}
+                <div class="text-xs text-slate-400 mt-1 ip-org"></div>
+                {% endif %}
+              </td>
+
+              <!-- DNS provider -->
+              <td class="px-4 py-3" data-cell="dns">
+                {% set dns_slug = site.dns_provider | lower | replace(' ', '-') %}
+                <span class="badge dns-badge
+                  {% if 'cloudflare' in dns_slug %}dns-cloudflare
+                  {% elif 'cloudns' in dns_slug %}dns-cloudns
+                  {% elif 'aws' in dns_slug or 'route' in dns_slug %}dns-aws-route53
+                  {% elif 'google' in dns_slug %}dns-google
+                  {% elif site.dns_provider and site.dns_provider != 'Unknown' %}dns-default
+                  {% else %}dns-unknown
+                  {% endif %}">
+                  {{ site.dns_provider or '—' }}
+                </span>
+              </td>
+
+              <!-- Nameservers -->
+              <td class="px-4 py-3">
+                {% if site.nameservers %}
+                <div class="font-mono text-xs text-slate-500 space-y-0.5">
+                  {% for ns in site.nameservers[:2] %}
+                  <div class="truncate max-w-[180px]" title="{{ ns }}">{{ ns }}</div>
+                  {% endfor %}
+                  {% if site.nameservers | length > 2 %}
+                  <button onclick="toggleNS(this)"
+                          data-ns="{{ site.nameservers | join('\n') }}"
+                          class="text-sky-500 hover:underline text-xs">
+                    +{{ site.nameservers | length - 2 }} more
+                  </button>
+                  {% endif %}
+                </div>
+                {% else %}
+                <span class="text-slate-300">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Registrar -->
+              <td class="px-4 py-3 text-xs text-slate-600 max-w-[150px]" data-cell="reg">
+                {{ site.registrar or '—' }}
+              </td>
+
+              <!-- Expiry -->
+              <td class="px-4 py-3 text-xs" data-cell="expiry">
+                {% if site.expiry_date %}
+                  <span class="
+                    {% if site.expiry_days is not none and site.expiry_days < 30 %}expiry-danger
+                    {% elif site.expiry_days is not none and site.expiry_days < 90 %}expiry-warning
+                    {% else %}text-slate-600
+                    {% endif %}">
+                    {{ site.expiry_date }}
+                    {% if site.expiry_days is not none %}
+                      <span class="text-slate-400 font-normal">({{ site.expiry_days }}d)</span>
+                    {% endif %}
+                  </span>
+                {% else %}
+                  <span class="text-slate-300">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Teamwork -->
+              <td class="px-4 py-3">
+                {% if site.teamwork_assignee %}
+                  {% set assignees = site.teamwork_assignee.split(',') %}
+                  {% set task_ids = site.teamwork_task_id.split(',') if site.teamwork_task_id else [] %}
+                  {% for assignee in assignees %}
+                  <div class="flex items-center gap-1.5 {% if not loop.first %}mt-1{% endif %}">
+                    <span class="badge tw-assignee-{{ assignee.strip() | lower }}">{{ assignee.strip() }}</span>
+                    {% if task_ids[loop.index0] is defined %}
+                    <a href="https://digitalnomads.teamwork.com/app/tasks/{{ task_ids[loop.index0] }}"
+                       target="_blank" rel="noopener"
+                       class="inline-flex items-center gap-0.5 text-xs text-green-600 hover:text-green-800 hover:underline">
+                      <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2
+                                 M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                      </svg>
+                      View
+                    </a>
+                    {% endif %}
+                  </div>
+                  {% endfor %}
+                {% else %}
+                  <span class="text-slate-300">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Actions -->
+              <td class="px-4 py-3 text-right">
+                <div class="relative inline-block">
+                  <button onclick="toggleMenu(this)"
+                          class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                    </svg>
+                  </button>
+                  <div class="menu-dropdown hidden absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-lg border border-slate-100 z-20 py-1">
+                    <button onclick="recheckSite('{{ site.domain }}', this); closeMenus()"
+                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
+                      <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+                      </svg>
+                      Re-check
+                    </button>
+                    <button onclick="recheckUptime('{{ site.domain }}', this); closeMenus()"
+                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
+                      <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                      </svg>
+                      Check Uptime
+                    </button>
+                    <div class="border-t border-slate-100 my-1"></div>
+                    <button onclick="removeSite('{{ site.domain }}')"
+                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition">
+                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                      </svg>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </td>
+
+            </tr>
+            {% endfor %}
+
+          {% else %}
+          <tr>
+            <td colspan="9" class="px-6 py-20 text-center">
+              <div class="text-slate-400">
+                <svg class="w-12 h-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M9 17v-2a4 4 0 014-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <p class="font-medium">No sites yet</p>
+                <p class="text-sm mt-1">Click <strong>Refresh All</strong> to pull sites from your hosting APIs,
+                   or <strong>Add Site</strong> to add one manually.</p>
+              </div>
+            </td>
+          </tr>
+          {% endif %}
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     ADD SITE MODAL
+============================================================ -->
+<div id="add-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <!-- Backdrop -->
+  <div class="absolute inset-0 bg-black/40 modal-backdrop" onclick="closeAddModal()"></div>
+
+  <!-- Box -->
+  <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md modal-box">
+    <div class="flex items-center justify-between p-6 border-b border-slate-100">
+      <h2 class="text-lg font-semibold text-slate-800">Add Site Manually</h2>
+      <button onclick="closeAddModal()"
+              class="text-slate-400 hover:text-slate-600 transition">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <form method="POST" action="/add-site" id="add-form" onsubmit="return onAddSubmit()">
+      <div class="p-6 space-y-4">
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Domain <span class="text-red-400">*</span></label>
+          <input name="domain" type="text" required placeholder="example.com"
+                 class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg
+                        focus:outline-none focus:ring-2 focus:ring-sky-400" />
+          <p class="text-xs text-slate-400 mt-1">Just the domain — no https:// or trailing slash.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Site Name</label>
+          <input name="name" type="text" placeholder="My Client Site"
+                 class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg
+                        focus:outline-none focus:ring-2 focus:ring-sky-400" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Hosting</label>
+          <select name="host"
+                  class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg
+                         focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white">
+            <option value="External">External (client-managed)</option>
+            <option value="Cloudways">Cloudways</option>
+            <option value="Kinsta">Kinsta</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">Notes</label>
+          <textarea name="notes" rows="2" placeholder="Optional — e.g. 'WP Engine via client account'"
+                    class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg
+                           focus:outline-none focus:ring-2 focus:ring-sky-400 resize-none"></textarea>
+        </div>
+
+      </div>
+
+      <div class="px-6 pb-6 flex gap-2 justify-end">
+        <button type="button" onclick="closeAddModal()"
+                class="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition">
+          Cancel
+        </button>
+        <button type="submit" id="add-submit-btn"
+                class="px-5 py-2 text-sm font-semibold bg-sky-500 hover:bg-sky-400 text-white
+                       rounded-lg transition flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Add &amp; Lookup
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     REFRESH OVERLAY
+============================================================ -->
+<div id="refresh-overlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 text-center w-72">
+    <div class="relative w-14 h-14 mx-auto mb-4">
+      <svg class="spinner w-14 h-14 text-sky-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+        <path class="opacity-80" fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+      </svg>
+    </div>
+    <p class="font-semibold text-slate-800 mb-1">Refreshing site data…</p>
+    <p class="text-sm text-slate-500 mb-3">Running DNS &amp; WHOIS lookups for all sites.</p>
+    <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-2">
+      <div id="progress-bar" class="bg-sky-500 h-2 rounded-full transition-all duration-500" style="width:0%"></div>
+    </div>
+    <p id="progress-text" class="text-xs text-slate-400">Starting…</p>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     UPTIME OVERLAY
+============================================================ -->
+<div id="uptime-overlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 text-center w-80">
+    <div class="relative w-14 h-14 mx-auto mb-4">
+      <svg class="spinner w-14 h-14 text-emerald-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+        <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+      </svg>
+    </div>
+    <p class="font-semibold text-slate-800 mb-1">Checking uptime…</p>
+    <p class="text-sm text-slate-500 mb-3">Pinging all domains concurrently.</p>
+    <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-2">
+      <div id="uptime-bar" class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
+    </div>
+    <p id="uptime-text" class="text-xs text-slate-400 mb-4">Starting…</p>
+    <button onclick="document.getElementById('uptime-overlay').classList.add('hidden')"
+            class="text-xs text-slate-400 hover:text-slate-600">Hide (runs in background)</button>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     BACKFILL OVERLAY
+============================================================ -->
+<div id="backfill-overlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 text-center w-80">
+    <div class="relative w-14 h-14 mx-auto mb-4">
+      <svg class="spinner w-14 h-14 text-slate-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+        <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+      </svg>
+    </div>
+    <p class="font-semibold text-slate-800 mb-1">Filling registrar data…</p>
+    <p class="text-sm text-slate-500 mb-3">Looking up WHOIS for each domain. This takes a few minutes.</p>
+    <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-2">
+      <div id="backfill-bar" class="bg-slate-500 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
+    </div>
+    <p id="backfill-text" class="text-xs text-slate-400 mb-4">Starting…</p>
+    <button onclick="document.getElementById('backfill-overlay').classList.add('hidden')"
+            class="text-xs text-slate-400 hover:text-slate-600">Hide (runs in background)</button>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     NS TOOLTIP MODAL (simple)
+============================================================ -->
+<div id="ns-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="absolute inset-0 bg-black/30" onclick="closeNSModal()"></div>
+  <div class="relative bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
+    <h3 class="font-semibold text-slate-800 mb-3">All Nameservers</h3>
+    <div id="ns-list" class="font-mono text-xs text-slate-600 space-y-1"></div>
+    <button onclick="closeNSModal()"
+            class="mt-4 text-sm text-sky-500 hover:underline">Close</button>
+  </div>
+</div>
+
+
+<!-- ============================================================
+     JAVASCRIPT
+============================================================ -->
+<script>
+  // ---- Search & filter ----
+  function filterTable() {
+    const query         = document.getElementById('search').value.toLowerCase();
+    const provider      = document.getElementById('provider-filter').value.toLowerCase();
+    const showStaging   = document.getElementById('show-staging').checked;
+    const teamworkOnly  = document.getElementById('teamwork-only').checked;
+    const assignee      = document.getElementById('assignee-filter').value.toLowerCase();
+    const uptime        = document.getElementById('uptime-filter').value;
+    const rows          = document.querySelectorAll('#table-body .site-row');
+    let visible         = 0;
+
+    rows.forEach(row => {
+      const isStaging     = row.dataset.staging === '1';
+      const matchStaging  = showStaging || !isStaging;
+      const matchSearch   = !query   || row.dataset.domain.includes(query)
+                                      || row.dataset.name.includes(query)
+                                      || row.dataset.ip.includes(query)
+                                      || row.dataset.dns.includes(query)
+                                      || row.dataset.reg.includes(query);
+      const matchProvider = !provider || row.dataset.host === provider;
+      const matchTeamwork  = !teamworkOnly || row.dataset.teamwork === '1';
+      const matchAssignee  = !assignee || (row.dataset.assignee || '').includes(assignee);
+      const matchUptime    = !uptime  || (row.dataset.uptime || 'unknown') === uptime;
+      const show           = matchStaging && matchSearch && matchProvider && matchTeamwork && matchAssignee && matchUptime;
+      row.style.display   = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    document.getElementById('visible-count').textContent =
+      `Showing ${visible} of {{ total }} sites`;
+  }
+
+  // ---- Stat card filter ----
+  function setProviderFilter(provider) {
+    document.getElementById('provider-filter').value = provider;
+    filterTable();
+    // Highlight active card
+    document.querySelectorAll('.stat-card').forEach(card => {
+      const active = card.dataset.provider === provider;
+      card.classList.toggle('border-sky-400', active);
+      card.classList.toggle('shadow-md', active);
+      card.classList.toggle('border-transparent', !active);
+    });
+  }
+
+  // ---- 3-dot menu ----
+  function toggleMenu(btn) {
+    const dropdown = btn.nextElementSibling;
+    const isOpen = !dropdown.classList.contains('hidden');
+    closeMenus();
+    if (!isOpen) dropdown.classList.remove('hidden');
+  }
+
+  function closeMenus() {
+    document.querySelectorAll('.menu-dropdown').forEach(d => d.classList.add('hidden'));
+  }
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.relative')) closeMenus();
+  });
+
+  function removeSite(domain) {
+    closeMenus();
+    if (!confirm(`Remove ${domain} from the dashboard?`)) return;
+    const fd = new FormData();
+    fd.append('domain', domain);
+    fetch('/delete-site', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'fetch' } })
+      .then(() => {
+        const row = document.querySelector(`tr[data-domain="${domain}"]`);
+        if (row) row.remove();
+      });
+  }
+
+  // ---- Re-check single site ----
+  function recheckSite(domain, btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<svg class="w-3.5 h-3.5 spinner" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+    </svg> Checking…`;
+
+    fetch('/recheck-site', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        const row = btn.closest('tr');
+        // Update IP cell
+        const ipCell = row.querySelector('[data-cell="ip"]');
+        if (ipCell) {
+          ipCell.querySelector('.ip-val').textContent = data.ip_address || '—';
+          const orgEl = ipCell.querySelector('.ip-org');
+          if (orgEl) orgEl.textContent = data.ip_org || '';
+        }
+        // Update DNS cell
+        const dnsCell = row.querySelector('[data-cell="dns"]');
+        if (dnsCell) dnsCell.querySelector('.dns-badge').textContent = data.dns_provider || '—';
+        // Update Registrar cell
+        const regCell = row.querySelector('[data-cell="reg"]');
+        if (regCell) regCell.textContent = data.registrar || '—';
+        // Update Expiry cell
+        const expCell = row.querySelector('[data-cell="expiry"]');
+        if (expCell) expCell.textContent = data.expiry_date || '—';
+
+        btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg> Done`;
+        btn.classList.replace('bg-slate-100', 'bg-green-50');
+        btn.classList.replace('text-slate-500', 'text-green-600');
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+          </svg> Re-check`;
+          btn.classList.replace('bg-green-50', 'bg-slate-100');
+          btn.classList.replace('text-green-600', 'text-slate-500');
+        }, 3000);
+      } else {
+        btn.textContent = 'Error';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => { btn.textContent = 'Error'; btn.disabled = false; });
+  }
+
+  // ---- Check uptime for a single site ----
+  function recheckUptime(domain, btn) {
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<svg class="w-4 h-4 spinner inline-block mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg> Pinging…`;
+
+    fetch('/recheck-uptime', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        const row = document.querySelector(`tr[data-domain="${domain}"]`);
+        if (row) {
+          row.dataset.uptime = data.status;
+          const dot = row.querySelector('td:first-child .rounded-full');
+          if (dot) {
+            dot.className = 'w-2 h-2 rounded-full flex-shrink-0 ' +
+              (data.status === 'up' ? 'bg-green-400' : data.status === 'down' ? 'bg-red-500' : 'bg-slate-300');
+            dot.title = data.status === 'up' ? 'Online' : data.status === 'down' ? 'Down' : 'Not checked';
+          }
+        }
+      }
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
+    })
+    .catch(() => { btn.disabled = false; btn.innerHTML = originalHTML; });
+  }
+
+  // Hide staging sites on initial load
+  filterTable();
+
+  // ---- Sort ----
+  let sortCol = null, sortDir = 1;
+  const sortMap = { name: 'name', host: 'host', ip: 'ip', dns: 'dns', reg: 'reg', expiry: 'expiry' };
+
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      if (sortCol === col) { sortDir *= -1; }
+      else { sortCol = col; sortDir = 1; }
+
+      document.querySelectorAll('th[data-sort]').forEach(t => {
+        t.classList.remove('sorted-asc', 'sorted-desc');
+      });
+      th.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
+
+      const tbody = document.getElementById('table-body');
+      const rows  = Array.from(tbody.querySelectorAll('.site-row'));
+      rows.sort((a, b) => {
+        const key  = sortMap[col];
+        const aVal = (a.dataset[key] || '').toLowerCase();
+        const bVal = (b.dataset[key] || '').toLowerCase();
+        return sortDir * aVal.localeCompare(bVal);
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+
+  // ---- Check Uptime ----
+  function startUptimeCheck() {
+    fetch('/check-uptime', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('uptime-overlay').classList.remove('hidden');
+        document.getElementById('uptime-bar').style.width = '0%';
+        document.getElementById('uptime-text').textContent = 'Starting…';
+        const poll = setInterval(() => {
+          fetch('/check-uptime-status')
+            .then(r => r.json())
+            .then(s => {
+              const pct = s.total > 0 ? Math.round((s.progress / s.total) * 100) : 0;
+              document.getElementById('uptime-bar').style.width = pct + '%';
+              document.getElementById('uptime-text').textContent =
+                s.total > 0 ? `${s.progress} of ${s.total} domains checked` : 'Starting…';
+              if (!s.running && s.progress > 0) {
+                clearInterval(poll);
+                document.getElementById('uptime-text').textContent = `Done — ${s.total} domains checked`;
+                document.getElementById('uptime-bar').style.width = '100%';
+                setTimeout(() => {
+                  document.getElementById('uptime-overlay').classList.add('hidden');
+                  location.reload();
+                }, 1500);
+              }
+            }).catch(() => {});
+        }, 800);
+      });
+  }
+
+  // ---- Sync Teamwork ----
+  function startTeamworkSync() {
+    const btn = document.getElementById('teamwork-btn');
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    fetch('/sync-teamwork', { method: 'POST' })
+      .then(() => {
+        btn.textContent = 'Done! Reloading…';
+        setTimeout(() => location.reload(), 2000);
+      });
+  }
+
+  // ---- Fill Registrars ----
+  function startBackfill() {
+    fetch('/backfill-registrars', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.already_running) { showBackfillOverlay(); return; }
+        if (data.started) showBackfillOverlay();
+      });
+  }
+
+  function showBackfillOverlay() {
+    document.getElementById('backfill-overlay').classList.remove('hidden');
+    document.getElementById('backfill-bar').style.width = '0%';
+    document.getElementById('backfill-text').textContent = 'Starting…';
+
+    const poll = setInterval(() => {
+      fetch('/backfill-registrars-status')
+        .then(r => r.json())
+        .then(data => {
+          const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
+          document.getElementById('backfill-bar').style.width = pct + '%';
+          document.getElementById('backfill-text').textContent =
+            data.total > 0
+              ? `${data.progress} of ${data.total} domains — ${data.filled} registrars found`
+              : 'Starting…';
+          if (!data.running && data.progress > 0) {
+            clearInterval(poll);
+            document.getElementById('backfill-text').textContent =
+              `Done — ${data.filled} of ${data.total} registrars filled`;
+            document.getElementById('backfill-bar').style.width = '100%';
+            document.getElementById('backfill-bar').classList.replace('bg-slate-500', 'bg-green-500');
+            setTimeout(() => {
+              document.getElementById('backfill-overlay').classList.add('hidden');
+              location.reload();
+            }, 2000);
+          }
+        })
+        .catch(() => {});
+    }, 1500);
+  }
+
+  // ---- Refresh ----
+  function startRefresh() {
+    document.getElementById('refresh-overlay').classList.remove('hidden');
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-text').textContent = 'Connecting to APIs…';
+
+    fetch('/refresh', { method: 'POST' }).then(() => {
+      const poll = setInterval(() => {
+        fetch('/refresh-status')
+          .then(r => r.json())
+          .then(data => {
+            const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
+            document.getElementById('progress-bar').style.width = pct + '%';
+            document.getElementById('progress-text').textContent =
+              data.total > 0
+                ? `${data.progress} of ${data.total} sites`
+                : 'Fetching site list…';
+
+            if (!data.running) {
+              clearInterval(poll);
+              location.reload();
+            }
+          })
+          .catch(() => {});
+      }, 1200);
+    });
+  }
+
+  // Auto-resume overlay if server restarted mid-refresh
+  {% if refresh_running %}
+  startRefresh();
+  {% endif %}
+
+  // ---- Add site modal ----
+  function openAddModal()  { document.getElementById('add-modal').classList.remove('hidden'); }
+  function closeAddModal() { document.getElementById('add-modal').classList.add('hidden'); }
+
+  function onAddSubmit() {
+    const btn = document.getElementById('add-submit-btn');
+    btn.disabled = true;
+    btn.innerHTML = `<svg class="spinner w-4 h-4" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+      <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+    </svg> Looking up…`;
+    return true;
+  }
+
+  // Close modal on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeAddModal(); closeNSModal(); }
+  });
+
+  // ---- Nameserver expand ----
+  function toggleNS(btn) {
+    const all = btn.dataset.ns.split('\n').filter(Boolean);
+    document.getElementById('ns-list').innerHTML =
+      all.map(ns => `<div>${ns}</div>`).join('');
+    document.getElementById('ns-modal').classList.remove('hidden');
+  }
+
+  function closeNSModal() {
+    document.getElementById('ns-modal').classList.add('hidden');
+  }
+</script>
+
+</body>
+</html>
