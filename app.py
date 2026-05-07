@@ -1214,6 +1214,45 @@ def email_log():
     )
 
 
+@app.route('/email-detail/<path:msg_id>')
+def email_detail(msg_id):
+    cfg     = load_config()
+    api_key = cfg.get('elasticemail', {}).get('api_key', '')
+    if not api_key:
+        return jsonify({'error': 'No Elastic Email API key configured.'})
+    try:
+        resp = requests.get(
+            f'{ELASTIC_BASE}/emails/{msg_id}/view',
+            headers={'X-ElasticEmail-ApiKey': api_key},
+            timeout=15,
+        )
+        if not resp.ok:
+            return jsonify({'error': f'API returned {resp.status_code}: {resp.text[:200]}'})
+        data = resp.json()
+
+        # Normalise into a consistent shape
+        body_html = data.get('BodyHtml') or data.get('Body', {}).get('Html') or ''
+        body_text = data.get('BodyText') or data.get('Body', {}).get('PlainText') or ''
+
+        # Parse headers list from dict if needed
+        raw_headers = data.get('Headers') or {}
+        if isinstance(raw_headers, dict):
+            headers = [{'name': k, 'value': v} for k, v in raw_headers.items()]
+        elif isinstance(raw_headers, list):
+            headers = raw_headers
+        else:
+            headers = []
+
+        return jsonify({
+            'body_html': body_html,
+            'body_text': body_text,
+            'headers':   headers,
+            'raw':       data,
+        })
+    except Exception as exc:
+        return jsonify({'error': str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
