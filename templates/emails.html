@@ -149,7 +149,7 @@
           {% for e in events %}
           <tr class="hover:bg-slate-50">
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-              {{ e.date[:16].replace('T', ' ') if e.date else '—' }}
+              {{ e.date or '—' }}
             </td>
             <td class="px-4 py-3">
               <span class="badge {{ e.badge }}">{{ e.label }}</span>
@@ -168,7 +168,7 @@
             </td>
             <td class="px-4 py-3 text-right">
               {% if e.msg_id %}
-              <button onclick="viewEmail('{{ e.msg_id }}', '{{ e.subject | replace("'", "\\'") }}', '{{ e.from }}', '{{ e.to }}', '{{ e.date[:16].replace('T',' ') if e.date else '' }}')"
+              <button onclick="viewEmail('{{ e.msg_id }}', '{{ e.subject | replace("'", "\\'") }}', '{{ e.from }}', '{{ e.to }}', '{{ e.date }}')"
                       class="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition"
                       title="View email">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

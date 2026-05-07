@@ -1121,6 +1121,21 @@ def export_csv():
 # ---------------------------------------------------------------------------
 
 ELASTIC_BASE = 'https://api.elasticemail.com/v4'
+AEST_OFFSET  = 10  # UTC+10 (AEST); AEDT is +11 but keeping simple
+
+def _to_aest(utc_str):
+    """Convert ISO UTC timestamp from Elastic Email to AEST with AM/PM."""
+    if not utc_str:
+        return ''
+    try:
+        # Handles '2026-04-30T23:13:00' and '2026-04-30T23:13:00.000'
+        clean = utc_str[:19]
+        dt = datetime.strptime(clean, '%Y-%m-%dT%H:%M:%S')
+        from datetime import timedelta
+        dt_aest = dt + timedelta(hours=AEST_OFFSET)
+        return dt_aest.strftime('%-d %b %Y, %-I:%M %p')
+    except Exception:
+        return utc_str[:16].replace('T', ' ')
 
 EVENT_LABELS = {
     'Submission':    ('Submitted',  'bg-slate-100 text-slate-600'),
@@ -1175,7 +1190,7 @@ def email_log():
                 for e in raw:
                     label, badge = EVENT_LABELS.get(e.get('EventType', ''), (e.get('EventType', '—'), 'bg-slate-100 text-slate-500'))
                     events.append({
-                        'date':    e.get('EventDate', ''),
+                        'date':    _to_aest(e.get('EventDate', '')),
                         'from':    e.get('FromEmail', ''),
                         'to':      e.get('To', ''),
                         'subject': e.get('Subject', ''),
