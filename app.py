@@ -1230,11 +1230,11 @@ def email_detail(msg_id):
             return jsonify({'error': f'API returned {resp.status_code}: {resp.text[:200]}'})
         data = resp.json()
 
-        # Normalise into a consistent shape
-        body_html = data.get('BodyHtml') or data.get('Body', {}).get('Html') or ''
-        body_text = data.get('BodyText') or data.get('Body', {}).get('PlainText') or ''
+        # v4 response: {"Preview": {"Body": "<html...>"}}
+        preview  = data.get('Preview') or {}
+        body_html = preview.get('Body') or ''
 
-        # Parse headers list from dict if needed
+        # Parse any headers if present (v4 doesn't return them but handle gracefully)
         raw_headers = data.get('Headers') or {}
         if isinstance(raw_headers, dict):
             headers = [{'name': k, 'value': v} for k, v in raw_headers.items()]
@@ -1245,9 +1245,8 @@ def email_detail(msg_id):
 
         return jsonify({
             'body_html': body_html,
-            'body_text': body_text,
+            'body_text': '',   # v4 view endpoint only returns HTML
             'headers':   headers,
-            'raw':       data,
         })
     except Exception as exc:
         return jsonify({'error': str(exc)})
