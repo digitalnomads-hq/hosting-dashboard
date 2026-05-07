@@ -1128,12 +1128,16 @@ def _to_aest(utc_str):
     if not utc_str:
         return ''
     try:
-        # Handles '2026-04-30T23:13:00' and '2026-04-30T23:13:00.000'
-        clean = utc_str[:19]
-        dt = datetime.strptime(clean, '%Y-%m-%dT%H:%M:%S')
         from datetime import timedelta
+        # Strip trailing Z or timezone info, keep first 19 chars
+        clean = utc_str.rstrip('Z').split('+')[0][:19]
+        dt = datetime.strptime(clean, '%Y-%m-%dT%H:%M:%S')
         dt_aest = dt + timedelta(hours=AEST_OFFSET)
-        return dt_aest.strftime('%-d %b %Y, %-I:%M %p')
+        # Cross-platform: remove leading zeros manually
+        day  = str(dt_aest.day)
+        hour = dt_aest.hour % 12 or 12
+        ampm = 'AM' if dt_aest.hour < 12 else 'PM'
+        return f"{day} {dt_aest.strftime('%b %Y')}, {hour}:{dt_aest.strftime('%M')} {ampm}"
     except Exception:
         return utc_str[:16].replace('T', ' ')
 
