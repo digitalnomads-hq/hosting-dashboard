@@ -64,6 +64,9 @@ def load_config():
     cfg['teamwork']['api_key']    = _env('TEAMWORK_API_KEY',    cfg['teamwork'].get('api_key', ''))
     cfg['teamwork']['project_id'] = int(_env('TEAMWORK_PROJECT_ID', cfg['teamwork'].get('project_id', 0)) or 0)
 
+    cfg.setdefault('elasticemail', {})
+    cfg['elasticemail']['api_key'] = _env('ELASTICEMAIL_API_KEY', cfg['elasticemail'].get('api_key', ''))
+
     return cfg
 
 
@@ -1110,6 +1113,104 @@ def export_csv():
         output.getvalue(),
         mimetype='text/csv',
         headers={'Content-Disposition': 'attachment; filename=dnhq-hosting.csv'}
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email log (Elastic Email)
+# ---------------------------------------------------------------------------
+
+ELASTIC_BASE = 'https://api.elasticemail.com/v4'
+
+EVENT_LABELS = {
+    'Submission':    ('Submitted',  'bg-slate-100 text-slate-600'),
+    'Sent':          ('Sent',       'bg-green-100 text-green-700'),
+    'Opened':        ('Opened',     'bg-sky-100 text-sky-700'),
+    'Clicked':       ('Clicked',    'bg-indigo-100 text-indigo-700'),
+    'Bounced':       ('Bounced',    'bg-red-100 text-red-700'),
+    'FailedAttempt': ('Failed',     'bg-orange-100 text-orange-700'),
+    'Unsubscribed':  ('Unsub',      'bg-yellow-100 text-yellow-700'),
+    'Complaint':     ('Complaint',  'bg-pink-100 text-pink-700'),
+}
+
+@app.route('/emails')
+def email_log():
+    cfg     = load_config()
+    api_key = cfg.get('elasticemail', {}).get('api_key', '')
+
+    # Filter params
+    from_date  = request.args.get('from', '')
+    to_date    = request.args.get('to', '')
+    event_type = request.args.get('type', '')
+    search     = request.args.get('q', '').strip().lower()
+    page       = max(1, int(request.args.get('page', 1)))
+    per_page   = 100
+
+    params = {
+        'limit':  per_page,
+        'offset': (page - 1) * per_page,
+        'orderBy': 'DateDescending',
+    }
+    if from_date:
+        params['from'] = from_date + 'T00:00:00'
+    if to_date:
+        params['to']   = to_date + 'T23:59:59'
+    if event_type:
+        params['eventTypes'] = [event_type]
+
+    events = []
+    error  = None
+    has_more = False
+
+    if api_key:
+        try:
+            resp = requests.get(
+                f'{ELASTIC_BASE}/events',
+                headers={'X-ElasticEmail-ApiKey': api_key},
+                params=params,
+                timeout=15,
+            )
+            if resp.ok:
+                raw = resp.json()
+                for e in raw:
+                    label, badge = EVENT_LABELS.get(e.get('EventType', ''), (e.get('EventType', '—'), 'bg-slate-100 text-slate-500'))
+                    events.append({
+                        'date':    e.get('EventDate', ''),
+                        'from':    e.get('FromEmail', ''),
+                        'to':      e.get('To', ''),
+                        'subject': e.get('Subject', ''),
+                        'type':    e.get('EventType', ''),
+                        'label':   label,
+                        'badge':   badge,
+                        'msg_id':  e.get('MsgID', ''),
+                        'message': e.get('Message', ''),
+                    })
+                has_more = len(raw) == per_page
+            else:
+                error = f'Elastic Email API error {resp.status_code}: {resp.text[:200]}'
+        except Exception as exc:
+            error = str(exc)
+    else:
+        error = 'No Elastic Email API key configured.'
+
+    # Client-side search filter
+    if search:
+        events = [e for e in events if
+                  search in e['to'].lower() or
+                  search in e['from'].lower() or
+                  search in e['subject'].lower()]
+
+    return render_template(
+        'emails.html',
+        events=events,
+        error=error,
+        from_date=from_date,
+        to_date=to_date,
+        event_type=event_type,
+        search=request.args.get('q', ''),
+        page=page,
+        has_more=has_more,
+        event_types=list(EVENT_LABELS.keys()),
     )
 
 
