@@ -11,9 +11,13 @@ import requests
 import dns.resolver
 import whois
 import yaml
-from flask import Flask, render_template, request, redirect, jsonify
+import hashlib
+import secrets
+from functools import wraps
+from flask import Flask, render_template, request, redirect, jsonify, session, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.yaml')
@@ -66,6 +70,8 @@ def load_config():
 
     cfg.setdefault('elasticemail', {})
     cfg['elasticemail']['api_key'] = _env('ELASTICEMAIL_API_KEY', cfg['elasticemail'].get('api_key', ''))
+
+    cfg['email_log_password'] = _env('EMAIL_LOG_PASSWORD', cfg.get('email_log_password', ''))
 
     return cfg
 
@@ -1117,6 +1123,41 @@ def export_csv():
 
 
 # ---------------------------------------------------------------------------
+# Email log auth
+# ---------------------------------------------------------------------------
+
+def require_email_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('email_log_authed'):
+            return redirect(url_for('email_login', next=request.url))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/email-login', methods=['GET', 'POST'])
+def email_login():
+    error = None
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        cfg = load_config()
+        correct = cfg.get('email_log_password', '')
+        # Constant-time comparison to prevent timing attacks
+        if correct and secrets.compare_digest(password.encode(), correct.encode()):
+            session['email_log_authed'] = True
+            next_url = request.args.get('next') or url_for('email_log')
+            return redirect(next_url)
+        error = 'Incorrect password.'
+    return render_template('email_login.html', error=error)
+
+
+@app.route('/email-logout')
+def email_logout():
+    session.pop('email_log_authed', None)
+    return redirect(url_for('email_login'))
+
+
+# ---------------------------------------------------------------------------
 # Email log (Elastic Email)
 # ---------------------------------------------------------------------------
 
@@ -1153,6 +1194,7 @@ EVENT_LABELS = {
 }
 
 @app.route('/emails')
+@require_email_auth
 def email_log():
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
@@ -1234,6 +1276,7 @@ def email_log():
 
 
 @app.route('/email-detail/<path:msg_id>')
+@require_email_auth
 def email_detail(msg_id):
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
