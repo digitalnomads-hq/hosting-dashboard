@@ -1202,7 +1202,9 @@ def email_log():
     # Filter params
     from_date  = request.args.get('from', '')
     to_date    = request.args.get('to', '')
-    event_type = request.args.get('type', '')
+    # Default to Sent only — the API returns one row per event so without
+    # filtering you get Submission + Sent + Opened all for the same email.
+    event_type = request.args.get('type', 'Sent')
     search     = request.args.get('q', '').strip().lower()
     page       = max(1, int(request.args.get('page', 1)))
     per_page   = 100
@@ -1211,13 +1213,12 @@ def email_log():
         'limit':  per_page,
         'offset': (page - 1) * per_page,
         'orderBy': 'DateDescending',
+        'eventTypes': [event_type],
     }
     if from_date:
         params['from'] = from_date + 'T00:00:00'
     if to_date:
         params['to']   = to_date + 'T23:59:59'
-    if event_type:
-        params['eventTypes'] = [event_type]
 
     events = []
     error  = None

@@ -104,7 +104,6 @@
         <label class="text-xs text-slate-500 font-medium">Event Type</label>
         <select name="type"
                 class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-400">
-          <option value="">All Events</option>
           {% for et in event_types %}
           <option value="{{ et }}" {% if event_type == et %}selected{% endif %}>{{ et }}</option>
           {% endfor %}
@@ -288,10 +287,6 @@
               class="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 -mb-px transition">
         Source
       </button>
-      <button id="tab-headers" onclick="showTab('headers')"
-              class="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 -mb-px transition">
-        Headers
-      </button>
     </div>
 
     <!-- Preview -->
@@ -301,12 +296,6 @@
     <!-- Source -->
     <div id="pane-source" class="hidden flex-1 overflow-auto">
       <pre id="email-source" class="p-5 text-xs text-slate-700 whitespace-pre-wrap break-all font-mono bg-slate-50 min-h-full"></pre>
-    </div>
-    <!-- Headers -->
-    <div id="pane-headers" class="hidden flex-1 overflow-auto p-5">
-      <table class="w-full text-xs">
-        <tbody id="headers-table" class="divide-y divide-slate-100"></tbody>
-      </table>
     </div>
   </div>
 
@@ -380,7 +369,7 @@
   }
 
   function showTab(tab) {
-    ['preview', 'source', 'headers'].forEach(t => {
+    ['preview', 'source'].forEach(t => {
       document.getElementById('pane-' + t).classList.toggle('hidden', t !== tab);
       const btn = document.getElementById('tab-' + t);
       btn.classList.toggle('border-sky-500',     t === tab);
