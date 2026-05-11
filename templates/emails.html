@@ -13,10 +13,13 @@
   <style>
     .badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold; }
     tbody tr:hover { background: #f8fafc; }
+    tbody tr.selected { background: #eff6ff !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { animation: spin 0.8s linear infinite; }
     #detail-panel { transition: transform 0.25s ease, opacity 0.25s ease; }
     #detail-panel.closed { transform: translateX(100%); opacity: 0; pointer-events: none; }
+    #selection-bar { transition: transform 0.2s ease, opacity 0.2s ease; }
+    #selection-bar.hidden-bar { transform: translateY(100%); opacity: 0; pointer-events: none; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
@@ -127,6 +130,10 @@
     <table class="w-full text-sm">
       <thead>
         <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
+          <th class="px-4 py-3 w-8">
+            <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)"
+                   class="rounded border-slate-300 text-sky-500 focus:ring-sky-400 cursor-pointer" />
+          </th>
           <th class="px-4 py-3 text-left font-semibold w-36">Sent</th>
           <th class="px-4 py-3 text-left font-semibold">Status</th>
           <th class="px-4 py-3 text-left font-semibold">From</th>
@@ -139,7 +146,13 @@
       <tbody class="divide-y divide-slate-50">
         {% if emails %}
           {% for e in emails %}
-          <tr class="hover:bg-slate-50 align-top">
+          <tr class="hover:bg-slate-50 align-top" data-idx="{{ loop.index0 }}">
+
+            <!-- Checkbox -->
+            <td class="px-4 py-3">
+              <input type="checkbox" class="row-check rounded border-slate-300 text-sky-500 focus:ring-sky-400 cursor-pointer"
+                     onchange="onRowCheck(this)" data-idx="{{ loop.index0 }}" />
+            </td>
 
             <!-- Date -->
             <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{{ e.date or '—' }}</td>
@@ -202,7 +215,7 @@
           {% endfor %}
         {% else %}
         <tr>
-          <td colspan="7" class="px-6 py-20 text-center">
+          <td colspan="8" class="px-6 py-20 text-center">
             <div class="text-slate-400">
               <svg class="w-12 h-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
@@ -228,6 +241,26 @@
     {% endif %}
   </div>
 </main>
+
+<!-- SELECTION ACTION BAR -->
+<div id="selection-bar" class="hidden-bar fixed bottom-6 left-1/2 -translate-x-1/2 z-50
+     flex items-center gap-4 bg-navy-900 text-white px-6 py-3 rounded-2xl shadow-2xl">
+  <span id="sel-count" class="text-sm font-semibold"></span>
+  <button onclick="exportSelectedCSV()"
+          class="flex items-center gap-2 px-4 py-1.5 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-xl transition">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 12V4m0 8l-3-3m3 3l3-3"/>
+    </svg>
+    Export CSV
+  </button>
+  <button onclick="clearSelection()"
+          class="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700 transition" title="Clear selection">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+    </svg>
+  </button>
+</div>
 
 <!-- EMAIL DETAIL SLIDE-OVER -->
 <div id="detail-backdrop" class="fixed inset-0 bg-black/30 z-30 hidden" onclick="closeDetail()"></div>
@@ -276,7 +309,99 @@
   </div>
 </div>
 
+<!-- Email row data for CSV export -->
 <script>
+  const EMAIL_DATA = {{ emails | tojson }};
+</script>
+
+<script>
+  // ─── Selection helpers ───────────────────────────────────────────────────
+
+  function toggleSelectAll(cb) {
+    document.querySelectorAll('.row-check').forEach(c => {
+      c.checked = cb.checked;
+      c.closest('tr').classList.toggle('selected', cb.checked);
+    });
+    updateSelectionBar();
+  }
+
+  function onRowCheck(cb) {
+    cb.closest('tr').classList.toggle('selected', cb.checked);
+    const all   = document.querySelectorAll('.row-check');
+    const checked = document.querySelectorAll('.row-check:checked');
+    const selAll = document.getElementById('select-all');
+    selAll.indeterminate = checked.length > 0 && checked.length < all.length;
+    selAll.checked = checked.length === all.length && all.length > 0;
+    updateSelectionBar();
+  }
+
+  function updateSelectionBar() {
+    const count = document.querySelectorAll('.row-check:checked').length;
+    const bar   = document.getElementById('selection-bar');
+    document.getElementById('sel-count').textContent =
+      count === 1 ? '1 email selected' : `${count} emails selected`;
+    bar.classList.toggle('hidden-bar', count === 0);
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('.row-check').forEach(c => {
+      c.checked = false;
+      c.closest('tr').classList.remove('selected');
+    });
+    document.getElementById('select-all').checked = false;
+    document.getElementById('select-all').indeterminate = false;
+    updateSelectionBar();
+  }
+
+  // ─── CSV export ──────────────────────────────────────────────────────────
+
+  function csvCell(val) {
+    if (val === null || val === undefined) return '';
+    const s = String(val);
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? '"' + s.replace(/"/g, '""') + '"'
+      : s;
+  }
+
+  function exportSelectedCSV() {
+    const checked = [...document.querySelectorAll('.row-check:checked')];
+    if (!checked.length) return;
+
+    const rows = checked.map(cb => EMAIL_DATA[parseInt(cb.dataset.idx)]);
+    const headers = ['Date', 'Status', 'From', 'To', 'Subject', 'Category', 'Channel', 'Opens', 'Clicks', 'Bounce / Error', 'Msg ID'];
+    const lines = [headers.join(',')];
+
+    rows.forEach(e => {
+      const status = (e.timeline || []).map(t => t.label).join(' → ');
+      lines.push([
+        csvCell(e.date),
+        csvCell(status),
+        csvCell(e.from),
+        csvCell(e.to),
+        csvCell(e.subject),
+        csvCell(e.category),
+        csvCell(e.channel),
+        csvCell(e.opens),
+        csvCell(e.clicks),
+        csvCell(e.message),
+        csvCell(e.msg_id),
+      ].join(','));
+    });
+
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url,
+      download: `email-log-${new Date().toISOString().slice(0,10)}.csv`,
+    });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ─── Email detail slide-over ─────────────────────────────────────────────
+
   function viewEmail(msgId, subject, from, to, date) {
     document.getElementById('detail-backdrop').classList.remove('hidden');
     document.getElementById('detail-panel').classList.remove('closed');
