@@ -104,14 +104,21 @@
   <!-- TABLE -->
   <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
     <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100">
-      <span class="text-sm font-semibold text-slate-700">
-        {{ emails | length }} email{{ 's' if emails | length != 1 else '' }}
-        {% if has_more %}<span class="text-slate-400 font-normal"> — showing latest 500 events grouped, use date filters to narrow</span>{% endif %}
-      </span>
+      <div class="flex items-center gap-3">
+        <span class="text-sm font-semibold text-slate-700">
+          {{ total_filtered }} email{{ 's' if total_filtered != 1 else '' }}
+        </span>
+        {% if total_stored %}
+        <span class="text-xs text-slate-400">{{ total_stored }} events stored locally</span>
+        {% endif %}
+        {% if synced %}
+        <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">+{{ synced }} new synced</span>
+        {% endif %}
+      </div>
       {% if page > 1 or has_more %}
       <div class="flex items-center gap-2 text-sm">
         {% if page > 1 %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page - 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">← Prev</a>{% endif %}
-        <span class="text-slate-400">Page {{ page }}</span>
+        <span class="text-slate-400">Page {{ page }} of {{ ((total_filtered - 1) // 100 + 1) if total_filtered else 1 }}</span>
         {% if has_more %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page + 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">Next →</a>{% endif %}
       </div>
       {% endif %}

@@ -115,6 +115,27 @@ def init_db():
             conn.execute('ALTER TABLE sites ADD COLUMN uptime_status TEXT DEFAULT "unknown"')
         if 'uptime_checked' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN uptime_checked INTEGER DEFAULT 0')
+
+        # Email events — permanent local history of all Elastic Email events
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS email_events (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_id           TEXT NOT NULL,
+                transaction_id   TEXT,
+                from_email       TEXT,
+                to_email         TEXT,
+                subject          TEXT,
+                event_type       TEXT,
+                event_date       TEXT,
+                channel_name     TEXT,
+                message_category TEXT,
+                message          TEXT,
+                ip_address       TEXT,
+                UNIQUE(msg_id, event_type, event_date)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_ee_date ON email_events(event_date)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_ee_msg  ON email_events(msg_id)')
         conn.commit()
 
 
@@ -1196,129 +1217,175 @@ EVENT_LABELS = {
 # Event priority — used to pick the "headline" status when grouping
 EVENT_PRIORITY = ['Bounced', 'Complaint', 'Unsubscribed', 'Clicked', 'Opened', 'Sent', 'FailedAttempt', 'Submission']
 
+def _sync_email_events(api_key):
+    """Fetch the latest 500 events from Elastic Email and save new ones to the local DB.
+    Returns (number_inserted, error_string_or_None)."""
+    try:
+        resp = requests.get(
+            f'{ELASTIC_BASE}/events',
+            headers={'X-ElasticEmail-ApiKey': api_key},
+            params={'limit': 500, 'offset': 0, 'orderBy': 'DateDescending'},
+            timeout=20,
+        )
+        if not resp.ok:
+            return 0, f'API error {resp.status_code}: {resp.text[:200]}'
+
+        raw = resp.json()
+        inserted = 0
+        with sqlite3.connect(DB_FILE) as conn:
+            for e in raw:
+                mid = e.get('MsgID') or e.get('TransactionID', '')
+                cur = conn.execute('''
+                    INSERT OR IGNORE INTO email_events
+                    (msg_id, transaction_id, from_email, to_email, subject,
+                     event_type, event_date, channel_name, message_category,
+                     message, ip_address)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    mid,
+                    e.get('TransactionID', ''),
+                    e.get('FromEmail', ''),
+                    e.get('To', ''),
+                    e.get('Subject', ''),
+                    e.get('EventType', ''),
+                    e.get('EventDate', ''),
+                    e.get('ChannelName', ''),
+                    e.get('MessageCategory', ''),
+                    e.get('Message', ''),
+                    e.get('IPAddress', ''),
+                ))
+                inserted += cur.rowcount
+            conn.commit()
+        return inserted, None
+    except Exception as exc:
+        return 0, str(exc)
+
+
+def _build_email_rows_from_db(from_date='', to_date='', search=''):
+    """Load email events from local DB, group by msg_id, return sorted display rows."""
+    where, params = [], []
+
+    if from_date:
+        where.append('event_date >= ?')
+        params.append(from_date + 'T00:00:00')
+    if to_date:
+        where.append('event_date <= ?')
+        params.append(to_date + 'T23:59:59')
+    if search:
+        where.append('(LOWER(to_email) LIKE ? OR LOWER(from_email) LIKE ? OR LOWER(subject) LIKE ?)')
+        params += [f'%{search}%', f'%{search}%', f'%{search}%']
+
+    where_sql = ('WHERE ' + ' AND '.join(where)) if where else ''
+
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f'SELECT * FROM email_events {where_sql} ORDER BY event_date ASC',
+            params,
+        ).fetchall()
+
+    # Group by msg_id
+    groups = {}
+    for row in rows:
+        mid = row['msg_id']
+        if mid not in groups:
+            groups[mid] = []
+        groups[mid].append(dict(row))
+
+    emails = []
+    for mid, evts in groups.items():
+        evts_sorted = sorted(evts, key=lambda x: x.get('event_date', ''))
+        first  = evts_sorted[0]
+        latest = evts_sorted[-1]
+
+        seen_types, event_types_ordered = set(), []
+        for ev in evts_sorted:
+            t = ev.get('event_type', '')
+            if t and t not in seen_types:
+                seen_types.add(t)
+                event_types_ordered.append(t)
+
+        headline_type = next(
+            (t for t in EVENT_PRIORITY if t in seen_types),
+            event_types_ordered[-1] if event_types_ordered else ''
+        )
+        headline_label, headline_badge = EVENT_LABELS.get(
+            headline_type, (headline_type, 'bg-slate-100 text-slate-500')
+        )
+
+        detail_msg = next(
+            (ev.get('message', '') for ev in evts_sorted
+             if ev.get('event_type') in ('Bounced', 'FailedAttempt') and ev.get('message')),
+            ''
+        )
+
+        timeline = [
+            {
+                'type':  t,
+                'label': EVENT_LABELS.get(t, (t, ''))[0],
+                'badge': EVENT_LABELS.get(t, ('', 'bg-slate-100 text-slate-500'))[1],
+            }
+            for t in event_types_ordered
+        ]
+
+        emails.append({
+            'msg_id':         mid,
+            'date':           _to_aest(first.get('event_date', '')),
+            'date_raw':       first.get('event_date', ''),
+            'from':           first.get('from_email', ''),
+            'to':             first.get('to_email', ''),
+            'subject':        first.get('subject', ''),
+            'channel':        first.get('channel_name', ''),
+            'category':       first.get('message_category', ''),
+            'ip':             latest.get('ip_address', ''),
+            'headline_label': headline_label,
+            'headline_badge': headline_badge,
+            'headline_type':  headline_type,
+            'timeline':       timeline,
+            'message':        detail_msg,
+            'opens':          sum(1 for ev in evts if ev.get('event_type') == 'Opened'),
+            'clicks':         sum(1 for ev in evts if ev.get('event_type') == 'Clicked'),
+        })
+
+    emails.sort(key=lambda x: x['date_raw'], reverse=True)
+    return emails
+
+
 @app.route('/emails')
 @require_email_auth
 def email_log():
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
 
-    # Filter params
     from_date = request.args.get('from', '')
     to_date   = request.args.get('to', '')
     search    = request.args.get('q', '').strip().lower()
     page      = max(1, int(request.args.get('page', 1)))
-    per_page  = 500   # Fetch a large batch so grouping has enough data
+    per_page  = 100
 
-    params = {
-        'limit':     per_page,
-        'offset':    (page - 1) * per_page,
-        'orderBy':   'DateDescending',
-    }
-    if from_date:
-        params['from'] = from_date + 'T00:00:00'
-    if to_date:
-        params['to']   = to_date + 'T23:59:59'
-
-    emails   = []   # grouped by MsgID
     error    = None
-    has_more = False
+    synced   = 0
 
+    # Always sync latest from API on page load — new events are INSERT OR IGNORE'd
     if api_key:
-        try:
-            resp = requests.get(
-                f'{ELASTIC_BASE}/events',
-                headers={'X-ElasticEmail-ApiKey': api_key},
-                params=params,
-                timeout=20,
-            )
-            if resp.ok:
-                raw = resp.json()
-                has_more = len(raw) == per_page
-
-                # Group events by MsgID
-                groups = {}
-                for e in raw:
-                    mid = e.get('MsgID') or e.get('TransactionID', '')
-                    if mid not in groups:
-                        groups[mid] = []
-                    groups[mid].append(e)
-
-                # Build one display row per MsgID
-                for mid, evts in groups.items():
-                    # Use the earliest event for metadata (Submission has the original send time)
-                    evts_sorted = sorted(evts, key=lambda x: x.get('EventDate', ''))
-                    first  = evts_sorted[0]
-                    latest = evts_sorted[-1]
-
-                    # Collect unique event types in chronological order
-                    seen_types, event_types_ordered = set(), []
-                    for ev in evts_sorted:
-                        t = ev.get('EventType', '')
-                        if t and t not in seen_types:
-                            seen_types.add(t)
-                            event_types_ordered.append(t)
-
-                    # Pick headline status by priority
-                    headline_type = next(
-                        (t for t in EVENT_PRIORITY if t in seen_types),
-                        event_types_ordered[-1] if event_types_ordered else ''
-                    )
-                    headline_label, headline_badge = EVENT_LABELS.get(
-                        headline_type, (headline_type, 'bg-slate-100 text-slate-500')
-                    )
-
-                    # Error/detail message (from bounce or failed events)
-                    detail_msg = next(
-                        (ev.get('Message', '') for ev in evts_sorted
-                         if ev.get('EventType') in ('Bounced', 'FailedAttempt') and ev.get('Message')),
-                        ''
-                    )
-
-                    # Build event timeline badges
-                    timeline = [
-                        {
-                            'type':  t,
-                            'label': EVENT_LABELS.get(t, (t, ''))[0],
-                            'badge': EVENT_LABELS.get(t, ('', 'bg-slate-100 text-slate-500'))[1],
-                        }
-                        for t in event_types_ordered
-                    ]
-
-                    emails.append({
-                        'msg_id':   mid,
-                        'date':     _to_aest(first.get('EventDate', '')),
-                        'date_raw': first.get('EventDate', ''),
-                        'from':     first.get('FromEmail', ''),
-                        'to':       first.get('To', ''),
-                        'subject':  first.get('Subject', ''),
-                        'channel':  first.get('ChannelName', ''),
-                        'category': first.get('MessageCategory', ''),
-                        'ip':       latest.get('IPAddress', ''),
-                        'headline_label': headline_label,
-                        'headline_badge': headline_badge,
-                        'headline_type':  headline_type,
-                        'timeline': timeline,
-                        'message':  detail_msg,
-                        'opens':    sum(1 for ev in evts if ev.get('EventType') == 'Opened'),
-                        'clicks':   sum(1 for ev in evts if ev.get('EventType') == 'Clicked'),
-                    })
-
-                # Sort grouped rows newest-first (by raw date of first event)
-                emails.sort(key=lambda x: x['date_raw'], reverse=True)
-
-            else:
-                error = f'Elastic Email API error {resp.status_code}: {resp.text[:200]}'
-        except Exception as exc:
-            error = str(exc)
+        synced, sync_err = _sync_email_events(api_key)
+        if sync_err:
+            error = f'Sync warning: {sync_err}'
     else:
         error = 'No Elastic Email API key configured.'
 
-    # Search filter
-    if search:
-        emails = [e for e in emails if
-                  search in e['to'].lower() or
-                  search in e['from'].lower() or
-                  search in e['subject'].lower()]
+    # Load all matching events from local DB (includes full history)
+    all_emails = _build_email_rows_from_db(from_date, to_date, search)
+
+    # Pagination over grouped results
+    total    = len(all_emails)
+    start    = (page - 1) * per_page
+    has_more = total > start + per_page
+    emails   = all_emails[start:start + per_page]
+
+    # Count total stored events for display
+    with sqlite3.connect(DB_FILE) as conn:
+        total_stored = conn.execute('SELECT COUNT(*) FROM email_events').fetchone()[0]
 
     return render_template(
         'emails.html',
@@ -1329,6 +1396,9 @@ def email_log():
         search=request.args.get('q', ''),
         page=page,
         has_more=has_more,
+        synced=synced,
+        total_stored=total_stored,
+        total_filtered=total,
     )
 
 
