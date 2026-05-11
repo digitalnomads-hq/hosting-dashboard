@@ -1193,6 +1193,9 @@ EVENT_LABELS = {
     'Complaint':     ('Complaint',  'bg-pink-100 text-pink-700'),
 }
 
+# Event priority — used to pick the "headline" status when grouping
+EVENT_PRIORITY = ['Bounced', 'Complaint', 'Unsubscribed', 'Clicked', 'Opened', 'Sent', 'FailedAttempt', 'Submission']
+
 @app.route('/emails')
 @require_email_auth
 def email_log():
@@ -1200,28 +1203,24 @@ def email_log():
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
 
     # Filter params
-    from_date  = request.args.get('from', '')
-    to_date    = request.args.get('to', '')
-    # Default to Sent only — the API returns one row per event so without
-    # filtering you get Submission + Sent + Opened all for the same email.
-    event_type = request.args.get('type', 'Sent')
-    search     = request.args.get('q', '').strip().lower()
-    page       = max(1, int(request.args.get('page', 1)))
-    per_page   = 100
+    from_date = request.args.get('from', '')
+    to_date   = request.args.get('to', '')
+    search    = request.args.get('q', '').strip().lower()
+    page      = max(1, int(request.args.get('page', 1)))
+    per_page  = 500   # Fetch a large batch so grouping has enough data
 
     params = {
-        'limit':  per_page,
-        'offset': (page - 1) * per_page,
-        'orderBy': 'DateDescending',
-        'eventTypes': [event_type],
+        'limit':     per_page,
+        'offset':    (page - 1) * per_page,
+        'orderBy':   'DateDescending',
     }
     if from_date:
         params['from'] = from_date + 'T00:00:00'
     if to_date:
         params['to']   = to_date + 'T23:59:59'
 
-    events = []
-    error  = None
+    emails   = []   # grouped by MsgID
+    error    = None
     has_more = False
 
     if api_key:
@@ -1230,24 +1229,83 @@ def email_log():
                 f'{ELASTIC_BASE}/events',
                 headers={'X-ElasticEmail-ApiKey': api_key},
                 params=params,
-                timeout=15,
+                timeout=20,
             )
             if resp.ok:
                 raw = resp.json()
-                for e in raw:
-                    label, badge = EVENT_LABELS.get(e.get('EventType', ''), (e.get('EventType', '—'), 'bg-slate-100 text-slate-500'))
-                    events.append({
-                        'date':    _to_aest(e.get('EventDate', '')),
-                        'from':    e.get('FromEmail', ''),
-                        'to':      e.get('To', ''),
-                        'subject': e.get('Subject', ''),
-                        'type':    e.get('EventType', ''),
-                        'label':   label,
-                        'badge':   badge,
-                        'msg_id':  e.get('MsgID', ''),
-                        'message': e.get('Message', ''),
-                    })
                 has_more = len(raw) == per_page
+
+                # Group events by MsgID
+                groups = {}
+                for e in raw:
+                    mid = e.get('MsgID') or e.get('TransactionID', '')
+                    if mid not in groups:
+                        groups[mid] = []
+                    groups[mid].append(e)
+
+                # Build one display row per MsgID
+                for mid, evts in groups.items():
+                    # Use the earliest event for metadata (Submission has the original send time)
+                    evts_sorted = sorted(evts, key=lambda x: x.get('EventDate', ''))
+                    first  = evts_sorted[0]
+                    latest = evts_sorted[-1]
+
+                    # Collect unique event types in chronological order
+                    seen_types, event_types_ordered = set(), []
+                    for ev in evts_sorted:
+                        t = ev.get('EventType', '')
+                        if t and t not in seen_types:
+                            seen_types.add(t)
+                            event_types_ordered.append(t)
+
+                    # Pick headline status by priority
+                    headline_type = next(
+                        (t for t in EVENT_PRIORITY if t in seen_types),
+                        event_types_ordered[-1] if event_types_ordered else ''
+                    )
+                    headline_label, headline_badge = EVENT_LABELS.get(
+                        headline_type, (headline_type, 'bg-slate-100 text-slate-500')
+                    )
+
+                    # Error/detail message (from bounce or failed events)
+                    detail_msg = next(
+                        (ev.get('Message', '') for ev in evts_sorted
+                         if ev.get('EventType') in ('Bounced', 'FailedAttempt') and ev.get('Message')),
+                        ''
+                    )
+
+                    # Build event timeline badges
+                    timeline = [
+                        {
+                            'type':  t,
+                            'label': EVENT_LABELS.get(t, (t, ''))[0],
+                            'badge': EVENT_LABELS.get(t, ('', 'bg-slate-100 text-slate-500'))[1],
+                        }
+                        for t in event_types_ordered
+                    ]
+
+                    emails.append({
+                        'msg_id':   mid,
+                        'date':     _to_aest(first.get('EventDate', '')),
+                        'date_raw': first.get('EventDate', ''),
+                        'from':     first.get('FromEmail', ''),
+                        'to':       first.get('To', ''),
+                        'subject':  first.get('Subject', ''),
+                        'channel':  first.get('ChannelName', ''),
+                        'category': first.get('MessageCategory', ''),
+                        'ip':       latest.get('IPAddress', ''),
+                        'headline_label': headline_label,
+                        'headline_badge': headline_badge,
+                        'headline_type':  headline_type,
+                        'timeline': timeline,
+                        'message':  detail_msg,
+                        'opens':    sum(1 for ev in evts if ev.get('EventType') == 'Opened'),
+                        'clicks':   sum(1 for ev in evts if ev.get('EventType') == 'Clicked'),
+                    })
+
+                # Sort grouped rows newest-first (by raw date of first event)
+                emails.sort(key=lambda x: x['date_raw'], reverse=True)
+
             else:
                 error = f'Elastic Email API error {resp.status_code}: {resp.text[:200]}'
         except Exception as exc:
@@ -1255,24 +1313,22 @@ def email_log():
     else:
         error = 'No Elastic Email API key configured.'
 
-    # Client-side search filter
+    # Search filter
     if search:
-        events = [e for e in events if
+        emails = [e for e in emails if
                   search in e['to'].lower() or
                   search in e['from'].lower() or
                   search in e['subject'].lower()]
 
     return render_template(
         'emails.html',
-        events=events,
+        emails=emails,
         error=error,
         from_date=from_date,
         to_date=to_date,
-        event_type=event_type,
         search=request.args.get('q', ''),
         page=page,
         has_more=has_more,
-        event_types=list(EVENT_LABELS.keys()),
     )
 
 

@@ -15,16 +15,8 @@
     tbody tr:hover { background: #f8fafc; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { animation: spin 0.8s linear infinite; }
-
-    /* Slide-over */
-    #detail-panel {
-      transition: transform 0.25s ease, opacity 0.25s ease;
-    }
-    #detail-panel.closed {
-      transform: translateX(100%);
-      opacity: 0;
-      pointer-events: none;
-    }
+    #detail-panel { transition: transform 0.25s ease, opacity 0.25s ease; }
+    #detail-panel.closed { transform: translateX(100%); opacity: 0; pointer-events: none; }
   </style>
 </head>
 <body class="bg-slate-100 min-h-screen font-sans text-slate-800">
@@ -43,13 +35,10 @@
       </div>
     </div>
     <nav class="flex items-center gap-2">
-      <!-- Nav menu (matches dashboard) -->
       <div class="flex items-center bg-slate-800 rounded-xl overflow-hidden">
-        <a href="/"
-           class="flex items-center gap-1.5 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 transition border-r border-slate-700">
+        <a href="/" class="flex items-center gap-1.5 px-4 py-2 text-white text-sm font-medium hover:bg-slate-700 transition border-r border-slate-700">
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/>
           </svg>
           Dashboard
         </a>
@@ -61,8 +50,6 @@
           Email Log
         </span>
       </div>
-
-      <!-- Refresh -->
       <button onclick="location.reload()"
               class="flex items-center gap-1.5 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-xl transition">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -71,8 +58,6 @@
         </svg>
         Refresh
       </button>
-
-      <!-- Sign out -->
       <a href="/email-logout"
          class="flex items-center gap-1.5 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium rounded-xl transition">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -100,28 +85,13 @@
         <input type="date" name="to" value="{{ to_date }}"
                class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-400" />
       </div>
-      <div class="flex flex-col gap-1">
-        <label class="text-xs text-slate-500 font-medium">Event Type</label>
-        <select name="type"
-                class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-400">
-          {% for et in event_types %}
-          <option value="{{ et }}" {% if event_type == et %}selected{% endif %}>{{ et }}</option>
-          {% endfor %}
-        </select>
-      </div>
       <div class="flex flex-col gap-1 flex-1 min-w-[200px]">
         <label class="text-xs text-slate-500 font-medium">Search</label>
         <input type="text" name="q" value="{{ search }}" placeholder="Recipient, sender, subject…"
                class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-400" />
       </div>
-      <button type="submit"
-              class="px-5 py-1.5 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-lg transition">
-        Filter
-      </button>
-      <a href="/emails"
-         class="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-lg transition">
-        Reset
-      </a>
+      <button type="submit" class="px-5 py-1.5 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-lg transition">Filter</button>
+      <a href="/emails" class="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium rounded-lg transition">Reset</a>
     </form>
   </div>
 
@@ -135,20 +105,14 @@
   <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-x-auto">
     <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100">
       <span class="text-sm font-semibold text-slate-700">
-        {{ events | length }} event{{ 's' if events | length != 1 else '' }}
-        {% if has_more %}<span class="text-slate-400 font-normal"> — showing first 100, use filters to narrow</span>{% endif %}
+        {{ emails | length }} email{{ 's' if emails | length != 1 else '' }}
+        {% if has_more %}<span class="text-slate-400 font-normal"> — showing latest 500 events grouped, use date filters to narrow</span>{% endif %}
       </span>
       {% if page > 1 or has_more %}
       <div class="flex items-center gap-2 text-sm">
-        {% if page > 1 %}
-        <a href="?from={{ from_date }}&to={{ to_date }}&type={{ event_type }}&q={{ search }}&page={{ page - 1 }}"
-           class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">← Prev</a>
-        {% endif %}
+        {% if page > 1 %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page - 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">← Prev</a>{% endif %}
         <span class="text-slate-400">Page {{ page }}</span>
-        {% if has_more %}
-        <a href="?from={{ from_date }}&to={{ to_date }}&type={{ event_type }}&q={{ search }}&page={{ page + 1 }}"
-           class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">Next →</a>
-        {% endif %}
+        {% if has_more %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page + 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">Next →</a>{% endif %}
       </div>
       {% endif %}
     </div>
@@ -156,48 +120,73 @@
     <table class="w-full text-sm">
       <thead>
         <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
-          <th class="px-4 py-3 text-left font-semibold w-36">Date</th>
-          <th class="px-4 py-3 text-left font-semibold w-24">Status</th>
+          <th class="px-4 py-3 text-left font-semibold w-36">Sent</th>
+          <th class="px-4 py-3 text-left font-semibold">Status</th>
           <th class="px-4 py-3 text-left font-semibold">From</th>
           <th class="px-4 py-3 text-left font-semibold">To</th>
           <th class="px-4 py-3 text-left font-semibold">Subject</th>
-          <th class="px-4 py-3 text-left font-semibold">Detail</th>
-          <th class="px-4 py-3 w-16"></th>
+          <th class="px-4 py-3 text-left font-semibold w-28">Channel</th>
+          <th class="px-4 py-3 w-10"></th>
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-50">
-        {% if events %}
-          {% for e in events %}
-          <tr class="hover:bg-slate-50">
-            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-              {{ e.date or '—' }}
-            </td>
+        {% if emails %}
+          {% for e in emails %}
+          <tr class="hover:bg-slate-50 align-top">
+
+            <!-- Date -->
+            <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{{ e.date or '—' }}</td>
+
+            <!-- Status timeline -->
             <td class="px-4 py-3">
-              <span class="badge {{ e.badge }}">{{ e.label }}</span>
+              <div class="flex flex-wrap gap-1 items-center">
+                {% for ev in e.timeline %}
+                <span class="badge {{ ev.badge }}">{{ ev.label }}</span>
+                {% if not loop.last %}
+                <svg class="w-2.5 h-2.5 text-slate-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+                {% endif %}
+                {% endfor %}
+              </div>
+              {% if e.opens > 1 %}
+              <span class="text-xs text-slate-400 mt-0.5 block">{{ e.opens }}× opened</span>
+              {% endif %}
+              {% if e.clicks %}
+              <span class="text-xs text-slate-400 mt-0.5 block">{{ e.clicks }}× clicked</span>
+              {% endif %}
+              {% if e.message %}
+              <span class="text-xs text-red-400 mt-0.5 block truncate max-w-xs" title="{{ e.message }}">{{ e.message }}</span>
+              {% endif %}
             </td>
-            <td class="px-4 py-3 text-xs text-slate-600 max-w-[160px] truncate" title="{{ e.from }}">
-              {{ e.from or '—' }}
+
+            <!-- From -->
+            <td class="px-4 py-3 text-xs text-slate-600 max-w-[160px] truncate" title="{{ e.from }}">{{ e.from or '—' }}</td>
+
+            <!-- To -->
+            <td class="px-4 py-3 text-xs text-slate-600 max-w-[180px] truncate" title="{{ e.to }}">{{ e.to or '—' }}</td>
+
+            <!-- Subject -->
+            <td class="px-4 py-3 text-xs text-slate-700 max-w-xs">
+              <div class="truncate" title="{{ e.subject }}">{{ e.subject or '—' }}</div>
+              {% if e.category and e.category != 'Unknown' %}
+              <span class="text-xs text-orange-500">{{ e.category }}</span>
+              {% endif %}
             </td>
-            <td class="px-4 py-3 text-xs text-slate-600 max-w-[180px] truncate" title="{{ e.to }}">
-              {{ e.to or '—' }}
-            </td>
-            <td class="px-4 py-3 text-xs text-slate-700 max-w-xs truncate" title="{{ e.subject }}">
-              {{ e.subject or '—' }}
-            </td>
-            <td class="px-4 py-3 text-xs text-slate-400 max-w-[200px] truncate" title="{{ e.message }}">
-              {{ e.message or '' }}
-            </td>
+
+            <!-- Channel -->
+            <td class="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{{ e.channel or '—' }}</td>
+
+            <!-- View button -->
             <td class="px-4 py-3 text-right">
               {% if e.msg_id %}
               <button onclick="viewEmail('{{ e.msg_id }}', '{{ e.subject | replace("'", "\\'") }}', '{{ e.from }}', '{{ e.to }}', '{{ e.date }}')"
-                      class="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition"
-                      title="View email">
+                      class="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition" title="Preview email">
                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7
-                           -1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                 </svg>
               </button>
               {% endif %}
@@ -225,39 +214,25 @@
     <div class="flex items-center justify-between px-5 py-3 border-t border-slate-100">
       <span class="text-xs text-slate-400">Page {{ page }}</span>
       <div class="flex items-center gap-2 text-sm">
-        {% if page > 1 %}
-        <a href="?from={{ from_date }}&to={{ to_date }}&type={{ event_type }}&q={{ search }}&page={{ page - 1 }}"
-           class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">← Prev</a>
-        {% endif %}
-        {% if has_more %}
-        <a href="?from={{ from_date }}&to={{ to_date }}&type={{ event_type }}&q={{ search }}&page={{ page + 1 }}"
-           class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">Next →</a>
-        {% endif %}
+        {% if page > 1 %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page - 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">← Prev</a>{% endif %}
+        {% if has_more %}<a href="?from={{ from_date }}&to={{ to_date }}&q={{ search }}&page={{ page + 1 }}" class="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition">Next →</a>{% endif %}
       </div>
     </div>
     {% endif %}
   </div>
 </main>
 
-<!-- ============================================================
-     EMAIL DETAIL SLIDE-OVER
-============================================================ -->
-<div id="detail-backdrop"
-     class="fixed inset-0 bg-black/30 z-30 hidden"
-     onclick="closeDetail()"></div>
-
-<div id="detail-panel"
-     class="closed fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-40 flex flex-col">
-
-  <!-- Panel header -->
+<!-- EMAIL DETAIL SLIDE-OVER -->
+<div id="detail-backdrop" class="fixed inset-0 bg-black/30 z-30 hidden" onclick="closeDetail()"></div>
+<div id="detail-panel" class="closed fixed top-0 right-0 h-full w-full max-w-2xl bg-white shadow-2xl z-40 flex flex-col">
   <div class="flex items-start justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
     <div>
       <h2 id="detail-subject" class="font-semibold text-slate-800 text-base leading-snug max-w-md"></h2>
-      <div class="flex gap-4 mt-1 text-xs text-slate-500">
+      <div class="flex gap-3 mt-1 text-xs text-slate-500 flex-wrap">
         <span id="detail-from"></span>
         <span>→</span>
         <span id="detail-to"></span>
-        <span id="detail-date" class="ml-auto"></span>
+        <span id="detail-date" class="text-slate-400"></span>
       </div>
     </div>
     <button onclick="closeDetail()" class="ml-4 flex-shrink-0 p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
@@ -266,40 +241,26 @@
       </svg>
     </button>
   </div>
-
-  <!-- Loading state -->
   <div id="detail-loading" class="flex-1 flex items-center justify-center">
     <svg class="w-8 h-8 spinner text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
             d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
     </svg>
   </div>
-
-  <!-- Content area (tabs: Preview / Source) -->
   <div id="detail-content" class="hidden flex-1 flex flex-col overflow-hidden">
-    <!-- Tabs -->
     <div class="flex border-b border-slate-100 px-6 flex-shrink-0">
       <button id="tab-preview" onclick="showTab('preview')"
-              class="px-4 py-2.5 text-sm font-medium border-b-2 border-sky-500 text-sky-600 -mb-px transition">
-        Preview
-      </button>
+              class="px-4 py-2.5 text-sm font-medium border-b-2 border-sky-500 text-sky-600 -mb-px transition">Preview</button>
       <button id="tab-source" onclick="showTab('source')"
-              class="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 -mb-px transition">
-        Source
-      </button>
+              class="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 -mb-px transition">Source</button>
     </div>
-
-    <!-- Preview -->
     <div id="pane-preview" class="flex-1 overflow-auto p-0">
       <iframe id="email-iframe" class="w-full h-full border-0" sandbox="allow-same-origin"></iframe>
     </div>
-    <!-- Source -->
     <div id="pane-source" class="hidden flex-1 overflow-auto">
       <pre id="email-source" class="p-5 text-xs text-slate-700 whitespace-pre-wrap break-all font-mono bg-slate-50 min-h-full"></pre>
     </div>
   </div>
-
-  <!-- Error state -->
   <div id="detail-error" class="hidden flex-1 flex items-center justify-center p-8 text-center">
     <div>
       <p class="text-slate-500 font-medium" id="detail-error-msg"></p>
@@ -310,18 +271,12 @@
 
 <script>
   function viewEmail(msgId, subject, from, to, date) {
-    // Show panel
     document.getElementById('detail-backdrop').classList.remove('hidden');
-    const panel = document.getElementById('detail-panel');
-    panel.classList.remove('closed');
-
-    // Set header meta
+    document.getElementById('detail-panel').classList.remove('closed');
     document.getElementById('detail-subject').textContent = subject || '(no subject)';
     document.getElementById('detail-from').textContent    = from  || '';
     document.getElementById('detail-to').textContent      = to    || '';
     document.getElementById('detail-date').textContent    = date  || '';
-
-    // Reset state
     document.getElementById('detail-loading').classList.remove('hidden');
     document.getElementById('detail-content').classList.add('hidden');
     document.getElementById('detail-error').classList.add('hidden');
@@ -330,35 +285,20 @@
       .then(r => r.json())
       .then(data => {
         document.getElementById('detail-loading').classList.add('hidden');
-
         if (data.error) {
           document.getElementById('detail-error-msg').textContent = data.error;
           document.getElementById('detail-error').classList.remove('hidden');
           return;
         }
-
-        // Populate content
-        const iframe = document.getElementById('email-iframe');
         const body = data.body_html || `<pre style="font-family:sans-serif;padding:16px;white-space:pre-wrap">${data.body_text || '(no content)'}</pre>`;
-        iframe.srcdoc = body;
-
+        document.getElementById('email-iframe').srcdoc = body;
         document.getElementById('email-source').textContent = data.body_text || data.body_html || '(no content)';
-
-        const htable = document.getElementById('headers-table');
-        htable.innerHTML = '';
-        (data.headers || []).forEach(h => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td class="py-1.5 pr-4 font-semibold text-slate-600 w-40 align-top">${h.name}</td>
-                          <td class="py-1.5 text-slate-500 break-all">${h.value}</td>`;
-          htable.appendChild(tr);
-        });
-
         showTab('preview');
         document.getElementById('detail-content').classList.remove('hidden');
       })
       .catch(err => {
         document.getElementById('detail-loading').classList.add('hidden');
-        document.getElementById('detail-error-msg').textContent = 'Failed to load email: ' + err;
+        document.getElementById('detail-error-msg').textContent = 'Failed to load: ' + err;
         document.getElementById('detail-error').classList.remove('hidden');
       });
   }
@@ -372,8 +312,8 @@
     ['preview', 'source'].forEach(t => {
       document.getElementById('pane-' + t).classList.toggle('hidden', t !== tab);
       const btn = document.getElementById('tab-' + t);
-      btn.classList.toggle('border-sky-500',     t === tab);
-      btn.classList.toggle('text-sky-600',       t === tab);
+      btn.classList.toggle('border-sky-500', t === tab);
+      btn.classList.toggle('text-sky-600',   t === tab);
       btn.classList.toggle('border-transparent', t !== tab);
       btn.classList.toggle('text-slate-500',     t !== tab);
     });
@@ -381,6 +321,5 @@
 
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
 </script>
-
 </body>
 </html>
