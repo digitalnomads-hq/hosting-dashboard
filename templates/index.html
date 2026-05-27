@@ -154,14 +154,14 @@
             Sync Teamwork
           </button>
 
-          <!-- Fill Registrars -->
+          <!-- Fill Details -->
           <button id="backfill-btn" onclick="startBackfill(); closeSettingsMenu()"
                   class="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition">
             <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M9 12h6m-3-3v6m-7 4h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
             </svg>
-            Fill Registrars
+            Fill Details
           </button>
 
           <div class="border-t border-slate-100 my-1"></div>
@@ -636,8 +636,8 @@
               d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
       </svg>
     </div>
-    <p class="font-semibold text-slate-800 mb-1">Refreshing site data…</p>
-    <p class="text-sm text-slate-500 mb-3">Running DNS &amp; WHOIS lookups for all sites.</p>
+    <p class="font-semibold text-slate-800 mb-1">Fetching new sites…</p>
+    <p class="text-sm text-slate-500 mb-3">Pulling site list from Cloudways &amp; Kinsta.</p>
     <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-2">
       <div id="progress-bar" class="bg-sky-500 h-2 rounded-full transition-all duration-500" style="width:0%"></div>
     </div>
@@ -956,7 +956,7 @@
       });
   }
 
-  // ---- Fill Registrars ----
+  // ---- Fill Details ----
   function startBackfill() {
     fetch('/backfill-registrars', { method: 'POST' })
       .then(r => r.json())
@@ -969,7 +969,7 @@
   function showBackfillOverlay() {
     document.getElementById('backfill-overlay').classList.remove('hidden');
     document.getElementById('backfill-bar').style.width = '0%';
-    document.getElementById('backfill-text').textContent = 'Starting…';
+    document.getElementById('backfill-text').textContent = 'Starting DNS & WHOIS lookups…';
 
     const poll = setInterval(() => {
       fetch('/backfill-registrars-status')
@@ -979,12 +979,12 @@
           document.getElementById('backfill-bar').style.width = pct + '%';
           document.getElementById('backfill-text').textContent =
             data.total > 0
-              ? `${data.progress} of ${data.total} domains — ${data.filled} registrars found`
+              ? `${data.progress} of ${data.total} sites — ${data.filled} enriched`
               : 'Starting…';
           if (!data.running && data.progress > 0) {
             clearInterval(poll);
             document.getElementById('backfill-text').textContent =
-              `Done — ${data.filled} of ${data.total} registrars filled`;
+              `Done — ${data.filled} of ${data.total} sites filled`;
             document.getElementById('backfill-bar').style.width = '100%';
             document.getElementById('backfill-bar').classList.replace('bg-slate-500', 'bg-green-500');
             setTimeout(() => {

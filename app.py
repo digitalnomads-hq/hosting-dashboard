@@ -631,10 +631,12 @@ def do_sync_teamwork():
 
 
 # ---------------------------------------------------------------------------
-# Full refresh
+# Fetch sites (Cloudways + Kinsta only — fast, no DNS/WHOIS enrichment)
 # ---------------------------------------------------------------------------
 
 def do_refresh():
+    """Pull domains from Cloudways and Kinsta, INSERT new ones, update metadata on
+    existing ones.  Never deletes rows — DNS/WHOIS enrichment is done separately."""
     global _refresh_state
     with _refresh_lock:
         if _refresh_state['running']:
@@ -642,92 +644,63 @@ def do_refresh():
         _refresh_state = {'running': True, 'progress': 0, 'total': 0, 'error': None}
 
     try:
-        config = load_config()
-        all_sites = {}
+        config   = load_config()
+        fetched  = {}
 
         # --- Cloudways ---
         cw = config.get('cloudways', {})
         if cw.get('email') and cw.get('api_key'):
             for s in fetch_cloudways_sites(cw):
-                all_sites[s['domain']] = s
+                fetched[s['domain']] = s
 
         # --- Kinsta ---
         ki = config.get('kinsta', {})
         if ki.get('api_key'):
             for s in fetch_kinsta_sites(ki):
-                if s['domain'] not in all_sites:
-                    all_sites[s['domain']] = s
+                if s['domain'] not in fetched:
+                    fetched[s['domain']] = s
 
-        # --- Manual sites ---
-        for site in config.get('manual_sites', []):
-            domain = site.get('domain', '').strip()
-            if domain and domain not in all_sites:
-                all_sites[domain] = {
-                    'domain':           domain,
-                    'name':             site.get('name', domain),
-                    'hosting_provider': site.get('host', 'External'),
-                    'server_name':      '',
-                    'ip_address':       '',
-                    'notes':            site.get('notes', ''),
-                    'is_manual':        1,
-                }
+        _refresh_state['total'] = len(fetched)
+        added = 0
 
-        # --- ClouDNS zones ---
-        cloudns_cfg   = config.get('cloudns', {})
-        cloudns_zones = set()
-        if cloudns_cfg.get('auth_id') and cloudns_cfg.get('auth_password'):
-            cloudns_zones = fetch_cloudns_zones(cloudns_cfg)
-            print(f'[ClouDNS] Found {len(cloudns_zones)} zones')
-
-        _refresh_state['total'] = len(all_sites)
-
-        # Wipe existing (non-manual) entries so removed sites don't linger
         with sqlite3.connect(DB_FILE) as conn:
-            conn.execute('DELETE FROM sites WHERE is_manual = 0')
+            for domain, site in fetched.items():
+                cur = conn.execute('''
+                    INSERT OR IGNORE INTO sites
+                    (domain, name, hosting_provider, server_name, ip_address,
+                     is_manual, last_updated)
+                    VALUES (?, ?, ?, ?, ?, 0, ?)
+                ''', (
+                    site['domain'],
+                    site.get('name', domain),
+                    site.get('hosting_provider', ''),
+                    site.get('server_name', ''),
+                    site.get('ip_address', ''),
+                    int(time.time()),
+                ))
+                if cur.rowcount:
+                    added += 1
+                else:
+                    # Update hosting metadata in case the site moved servers
+                    conn.execute('''
+                        UPDATE sites
+                        SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?
+                        WHERE domain = ? AND is_manual = 0
+                    ''', (
+                        site.get('name', domain),
+                        site.get('hosting_provider', ''),
+                        site.get('server_name', ''),
+                        site.get('ip_address', ''),
+                        domain,
+                    ))
+                _refresh_state['progress'] += 1
             conn.commit()
 
-        # Enrich sites concurrently
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {
-                executor.submit(enrich_site, data, cloudns_zones, cloudns_cfg if cloudns_zones else None): domain
-                for domain, data in all_sites.items()
-            }
-            with sqlite3.connect(DB_FILE) as conn:
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        conn.execute('''
-                            INSERT OR REPLACE INTO sites
-                            (domain, name, hosting_provider, server_name, ip_address, ip_org,
-                             registrar, expiry_date, nameservers, dns_provider,
-                             notes, is_manual, last_updated)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            result['domain'],
-                            result.get('name', ''),
-                            result.get('hosting_provider', ''),
-                            result.get('server_name', ''),
-                            result.get('ip_address', ''),
-                            result.get('ip_org', ''),
-                            result.get('registrar', ''),
-                            result.get('expiry_date', ''),
-                            result.get('nameservers', '[]'),
-                            result.get('dns_provider', ''),
-                            result.get('notes', ''),
-                            result.get('is_manual', 0),
-                            result['last_updated'],
-                        ))
-                        conn.commit()
-                    except Exception as e:
-                        print(f'[Enrich] Error: {e}')
-                    finally:
-                        _refresh_state['progress'] += 1
-
-        print(f'[Refresh] Done — {len(all_sites)} sites at {datetime.now():%Y-%m-%d %H:%M}')
+        print(f'[Fetch Sites] Done — {added} new, {len(fetched) - added} updated at {datetime.now():%Y-%m-%d %H:%M}')
 
     except Exception as e:
         _refresh_state['error'] = str(e)
-        print(f'[Refresh] Fatal error: {e}')
+        print(f'[Fetch Sites] Fatal error: {e}')
     finally:
         _refresh_state['running'] = False
 
@@ -959,43 +932,78 @@ def backfill_ip_orgs():
     return jsonify({'started': True})
 
 
-def do_backfill_registrars():
+def do_fill_details():
+    """Enrich every site with DNS, WHOIS, and IP org data.
+    Skips fields that are already filled to avoid redundant lookups."""
     global _backfill_state
+
     with sqlite3.connect(DB_FILE) as conn:
-        rows = conn.execute(
-            "SELECT domain FROM sites WHERE registrar IS NULL OR registrar = ''"
-        ).fetchall()
+        rows = conn.execute('SELECT domain, ip_address FROM sites').fetchall()
 
     if not rows:
-        print('[Registrar backfill] Nothing to do.')
+        print('[Fill Details] Nothing to do.')
         return
 
-    domains = [r[0] for r in rows]
-    _backfill_state = {'running': True, 'progress': 0, 'total': len(domains), 'filled': 0}
-    print(f'[Registrar backfill] Looking up {len(domains)} domains…')
+    _backfill_state = {'running': True, 'progress': 0, 'total': len(rows), 'filled': 0}
+    print(f'[Fill Details] Enriching {len(rows)} sites…')
+
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    cloudns_zones = set()
+    if cloudns_cfg.get('auth_id') and cloudns_cfg.get('auth_password'):
+        try:
+            cloudns_zones = fetch_cloudns_zones(cloudns_cfg)
+            print(f'[Fill Details] ClouDNS zones: {len(cloudns_zones)}')
+        except Exception:
+            pass
 
     with sqlite3.connect(DB_FILE) as conn:
-        for i, domain in enumerate(domains, 1):
-            # Skip if already filled since the job started
-            current = conn.execute('SELECT registrar FROM sites WHERE domain = ?', (domain,)).fetchone()
-            if current and current[0]:
-                _backfill_state['progress'] = i
-                continue
+        for i, (domain, existing_ip) in enumerate(rows, 1):
             try:
-                registrar, expiry = lookup_whois(domain)
-                if registrar or expiry:
-                    conn.execute(
-                        'UPDATE sites SET registrar = ?, expiry_date = ? WHERE domain = ?',
-                        (registrar or '', expiry or '', domain)
-                    )
-                    conn.commit()
-                    _backfill_state['filled'] += 1
-            except Exception as e:
-                print(f'[Registrar backfill] Error for {domain}: {e}')
-            _backfill_state['progress'] = i
-            time.sleep(1)
+                apex = domain.removeprefix('www.')
+                in_cloudns = apex in cloudns_zones
 
-    print(f'[Registrar backfill] Done — {_backfill_state["filled"]}/{len(domains)} filled.')
+                # --- DNS / IP ---
+                if in_cloudns and cloudns_cfg:
+                    ip = fetch_cloudns_a_record(apex, cloudns_cfg) or existing_ip or ''
+                else:
+                    ip = existing_ip or ''
+
+                dns_ip, nameservers = lookup_dns(domain)
+                if not ip:
+                    ip = dns_ip or ''
+
+                dns_provider = 'ClouDNS' if in_cloudns else detect_dns_provider(nameservers)
+
+                # --- WHOIS ---
+                registrar, expiry = lookup_whois(apex)
+
+                # --- IP org ---
+                ip_org = lookup_ip_org(ip) if ip else ''
+
+                conn.execute('''
+                    UPDATE sites SET
+                        ip_address   = ?,
+                        ip_org       = ?,
+                        nameservers  = ?,
+                        dns_provider = ?,
+                        registrar    = ?,
+                        expiry_date  = ?,
+                        last_updated = ?
+                    WHERE domain = ?
+                ''', (
+                    ip, ip_org, json.dumps(nameservers), dns_provider,
+                    registrar or '', expiry or '',
+                    int(time.time()), domain,
+                ))
+                conn.commit()
+                _backfill_state['filled'] += 1
+            except Exception as e:
+                print(f'[Fill Details] Error for {domain}: {e}')
+            _backfill_state['progress'] = i
+            time.sleep(0.5)
+
+    print(f'[Fill Details] Done — {_backfill_state["filled"]}/{len(rows)} enriched.')
     _backfill_state['running'] = False
 
 
@@ -1003,7 +1011,7 @@ def do_backfill_registrars():
 def backfill_registrars():
     if _backfill_state.get('running'):
         return jsonify({'started': False, 'already_running': True})
-    thread = threading.Thread(target=do_backfill_registrars, daemon=True)
+    thread = threading.Thread(target=do_fill_details, daemon=True)
     thread.start()
     return jsonify({'started': True})
 
