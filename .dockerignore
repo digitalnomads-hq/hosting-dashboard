@@ -1,7 +1,10 @@
+config.yaml
 __pycache__/
 *.pyc
 *.pyo
+venv/
 sites.db
+*.db
 *.csv
 .env
 .git

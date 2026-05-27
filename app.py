@@ -18,6 +18,8 @@ from flask import Flask, render_template, request, redirect, jsonify, session, u
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+if not os.environ.get('SECRET_KEY'):
+    print('WARNING: SECRET_KEY not set — sessions will break with multiple workers. Set it as a Fly secret.')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.yaml')
@@ -26,10 +28,11 @@ DATA_DIR  = os.environ.get('DATA_DIR', BASE_DIR)
 DB_FILE   = os.path.join(DATA_DIR, 'sites.db')
 CACHE_TTL = 86400  # 24 hours
 
-_refresh_state  = {'running': False, 'progress': 0, 'total': 0, 'error': None}
-_refresh_lock   = threading.Lock()
-_backfill_state = {'running': False, 'progress': 0, 'total': 0, 'filled': 0}
-_uptime_state   = {'running': False, 'progress': 0, 'total': 0}
+_refresh_state   = {'running': False, 'progress': 0, 'total': 0, 'added': 0, 'error': None}
+_refresh_lock    = threading.Lock()
+_backfill_state  = {'running': False, 'progress': 0, 'total': 0, 'filled': 0}
+_uptime_state    = {'running': False, 'progress': 0, 'total': 0}
+_teamwork_state  = {'running': False, 'progress': 0, 'total': 0, 'added': 0}
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +90,8 @@ def save_config(config):
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS sites (
                 domain        TEXT PRIMARY KEY,
@@ -589,10 +594,14 @@ def fetch_teamwork_tasks(tw_cfg):
 
 
 def do_sync_teamwork():
+    global _teamwork_state
+    _teamwork_state = {'running': True, 'progress': 0, 'total': 0, 'added': 0}
+
     config = load_config()
     tw_cfg = config.get('teamwork', {})
     if not tw_cfg:
         print('[Teamwork sync] No teamwork config found.')
+        _teamwork_state['running'] = False
         return
 
     print('[Teamwork sync] Fetching tasks…')
@@ -600,9 +609,11 @@ def do_sync_teamwork():
         domain_map = fetch_teamwork_tasks(tw_cfg)
     except Exception as e:
         print(f'[Teamwork sync] Failed to fetch tasks: {e}')
+        _teamwork_state['running'] = False
         return
 
     print(f'[Teamwork sync] Found {len(domain_map)} domain tasks')
+    _teamwork_state['total'] = len(domain_map)
 
     with sqlite3.connect(DB_FILE) as conn:
         existing = {r[0] for r in conn.execute('SELECT domain FROM sites').fetchall()}
@@ -621,11 +632,13 @@ def do_sync_teamwork():
                 matched += 1
             else:
                 new_domains.append((domain, info))
+            _teamwork_state['progress'] += 1
 
         conn.commit()
 
     print(f'[Teamwork sync] Matched {matched}/{len(domain_map)} — enriching {len(new_domains)} new domains…')
 
+    added = 0
     for domain, info in new_domains:
         try:
             ip, nameservers = lookup_dns(domain)
@@ -648,12 +661,15 @@ def do_sync_teamwork():
                     int(time.time()),
                     info['task_id'], info['assignee'],
                 ))
+            added += 1
             print(f'[Teamwork sync] Added {domain} ({info["assignee"]})')
             time.sleep(1)
         except Exception as e:
             print(f'[Teamwork sync] Failed to add {domain}: {e}')
 
-    print(f'[Teamwork sync] Done — {matched} matched, {len(new_domains)} added.')
+    _teamwork_state['added'] = added
+    _teamwork_state['running'] = False
+    print(f'[Teamwork sync] Done — {matched} matched, {added} added.')
 
 
 # ---------------------------------------------------------------------------
@@ -783,6 +799,16 @@ def index():
         else:
             d['date_added_str'] = ''
 
+        # Format uptime_checked timestamp for tooltip display
+        uc = d.get('uptime_checked') or 0
+        if uc:
+            udt = datetime.fromtimestamp(uc)
+            hour = udt.hour % 12 or 12
+            ampm = 'AM' if udt.hour < 12 else 'PM'
+            d['uptime_checked_str'] = f"{udt.day} {udt.strftime('%b %Y')}, {hour}:{udt.strftime('%M')} {ampm}"
+        else:
+            d['uptime_checked_str'] = ''
+
         # Format hosting_created_at (date created on Cloudways/Kinsta) for display & sort
         hca = (d.get('hosting_created_at') or '').strip()
         if hca:
@@ -867,17 +893,30 @@ def add_site():
 
     with sqlite3.connect(DB_FILE) as conn:
         conn.execute('''
-            INSERT OR REPLACE INTO sites
+            INSERT INTO sites
             (domain, name, hosting_provider, server_name, ip_address, ip_org,
              registrar, expiry_date, nameservers, dns_provider,
-             notes, is_manual, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             notes, is_manual, date_added, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(domain) DO UPDATE SET
+                name             = excluded.name,
+                hosting_provider = excluded.hosting_provider,
+                server_name      = excluded.server_name,
+                ip_address       = excluded.ip_address,
+                ip_org           = excluded.ip_org,
+                registrar        = excluded.registrar,
+                expiry_date      = excluded.expiry_date,
+                nameservers      = excluded.nameservers,
+                dns_provider     = excluded.dns_provider,
+                notes            = excluded.notes,
+                is_manual        = 1,
+                last_updated     = excluded.last_updated
         ''', (
             result['domain'], result.get('name', ''), result.get('hosting_provider', ''),
             result.get('server_name', ''), result.get('ip_address', ''), result.get('ip_org', ''),
             result.get('registrar', ''), result.get('expiry_date', ''),
             result.get('nameservers', '[]'), result.get('dns_provider', ''),
-            result.get('notes', ''), 1, result['last_updated'],
+            result.get('notes', ''), int(time.time()), result['last_updated'],
         ))
         conn.commit()
 
@@ -943,8 +982,16 @@ def recheck_site():
                 dns_provider = :dns_provider,
                 last_updated = :last_updated
             WHERE domain = :domain
-        ''', {**updated, 'nameservers': json.dumps(updated['nameservers'])})
+        ''', {**updated, 'nameservers': updated.get('nameservers', '[]')})
         conn.commit()
+
+    # enrich_site returns nameservers as a JSON string; parse it back for the API response
+    ns = updated.get('nameservers', '[]')
+    if isinstance(ns, str):
+        try:
+            ns = json.loads(ns)
+        except Exception:
+            ns = []
 
     return jsonify({
         'ok': True,
@@ -953,51 +1000,9 @@ def recheck_site():
         'registrar':    updated['registrar'],
         'expiry_date':  updated['expiry_date'],
         'dns_provider': updated['dns_provider'],
-        'nameservers':  updated['nameservers'],
+        'nameservers':  ns,
     })
 
-
-# ---------------------------------------------------------------------------
-# IP org backfill  (fills ip_org for rows that have an IP but no org yet)
-# ---------------------------------------------------------------------------
-
-def do_backfill_ip_orgs():
-    with sqlite3.connect(DB_FILE) as conn:
-        rows = conn.execute(
-            "SELECT domain, ip_address FROM sites WHERE ip_address != '' AND (ip_org IS NULL OR ip_org = '')"
-        ).fetchall()
-
-    if not rows:
-        print('[Backfill] Nothing to do.')
-        return
-
-    print(f'[Backfill] Looking up IP orgs for {len(rows)} sites…')
-    done = 0
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(lookup_ip_org, ip): domain for domain, ip in rows}
-        with sqlite3.connect(DB_FILE) as conn:
-            for future in as_completed(futures):
-                domain = futures[future]
-                try:
-                    org = future.result()
-                    conn.execute('UPDATE sites SET ip_org = ? WHERE domain = ?', (org, domain))
-                    conn.commit()
-                    done += 1
-                    if done % 20 == 0:
-                        print(f'[Backfill] {done}/{len(rows)}…')
-                except Exception as e:
-                    print(f'[Backfill] Error for {domain}: {e}')
-
-    print(f'[Backfill] Done — updated {done} sites.')
-
-
-@app.route('/backfill-ip-orgs', methods=['POST'])
-def backfill_ip_orgs():
-    if not _refresh_state['running']:
-        thread = threading.Thread(target=do_backfill_ip_orgs, daemon=True)
-        thread.start()
-    return jsonify({'started': True})
 
 
 def do_fill_details():
@@ -1091,9 +1096,16 @@ def backfill_registrars_status():
 
 @app.route('/sync-teamwork', methods=['POST'])
 def sync_teamwork():
+    if _teamwork_state.get('running'):
+        return jsonify({'started': False, 'already_running': True})
     thread = threading.Thread(target=do_sync_teamwork, daemon=True)
     thread.start()
     return jsonify({'started': True})
+
+
+@app.route('/sync-teamwork-status')
+def sync_teamwork_status():
+    return jsonify(_teamwork_state)
 
 
 # ---------------------------------------------------------------------------
@@ -1242,7 +1254,9 @@ def email_login():
         # Constant-time comparison to prevent timing attacks
         if correct and secrets.compare_digest(password.encode(), correct.encode()):
             session['email_log_authed'] = True
-            next_url = request.args.get('next') or url_for('email_log')
+            next_url = request.args.get('next') or ''
+            if not next_url or not next_url.startswith('/'):
+                next_url = url_for('email_log')
             return redirect(next_url)
         error = 'Incorrect password.'
     return render_template('email_login.html', error=error)

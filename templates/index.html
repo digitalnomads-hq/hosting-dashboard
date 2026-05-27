@@ -357,7 +357,7 @@
                     {% if site.uptime_status == 'up' %}bg-green-400
                     {% elif site.uptime_status == 'down' %}bg-red-500
                     {% else %}bg-slate-300{% endif %}"
-                    title="{% if site.uptime_status == 'up' %}Online{% elif site.uptime_status == 'down' %}Down{% else %}Not checked{% endif %}">
+                    title="{% if site.uptime_status == 'up' %}Online{% elif site.uptime_status == 'down' %}Down{% else %}Not checked{% endif %}{% if site.uptime_checked_str %} — checked {{ site.uptime_checked_str }}{% endif %}">
                   </span>
                   <span class="font-semibold text-slate-800">{{ site.name }}</span>
                 </div>
@@ -722,6 +722,29 @@
 
 
 <!-- ============================================================
+     TEAMWORK SYNC OVERLAY
+============================================================ -->
+<div id="teamwork-overlay" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 text-center w-80">
+    <div class="relative w-14 h-14 mx-auto mb-4">
+      <svg class="spinner w-14 h-14 text-green-500" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+        <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+      </svg>
+    </div>
+    <p class="font-semibold text-slate-800 mb-1">Syncing Teamwork…</p>
+    <p class="text-sm text-slate-500 mb-3">Fetching tasks and matching domains.</p>
+    <div class="bg-slate-100 rounded-full h-2 overflow-hidden mb-2">
+      <div id="teamwork-bar" class="bg-green-500 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
+    </div>
+    <p id="teamwork-text" class="text-xs text-slate-400 mb-4">Starting…</p>
+    <button onclick="document.getElementById('teamwork-overlay').classList.add('hidden')"
+            class="text-xs text-slate-400 hover:text-slate-600">Hide (runs in background)</button>
+  </div>
+</div>
+
+
+<!-- ============================================================
      NS TOOLTIP MODAL (simple)
 ============================================================ -->
 <div id="ns-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -814,13 +837,18 @@
   function removeSite(domain) {
     closeMenus();
     if (!confirm(`Remove ${domain} from the dashboard?`)) return;
-    const fd = new FormData();
-    fd.append('domain', domain);
-    fetch('/delete-site', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'fetch' } })
-      .then(() => {
-        const row = document.querySelector(`tr[data-domain="${domain}"]`);
-        if (row) row.remove();
-      });
+    const row = document.querySelector(`tr[data-domain="${domain}"]`);
+    fetch('/delete-site', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'fetch' },
+      body: `domain=${encodeURIComponent(domain)}`
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok && row) row.remove();
+      else alert('Failed to remove site. Please try again.');
+    })
+    .catch(() => alert('Network error removing site.'));
   }
 
   // ---- Re-check single site ----
@@ -975,14 +1003,43 @@
 
   // ---- Sync Teamwork ----
   function startTeamworkSync() {
-    const btn = document.getElementById('teamwork-btn');
-    btn.disabled = true;
-    btn.textContent = 'Syncing…';
     fetch('/sync-teamwork', { method: 'POST' })
-      .then(() => {
-        btn.textContent = 'Done! Reloading…';
-        setTimeout(() => location.reload(), 2000);
+      .then(r => r.json())
+      .then(data => {
+        if (data.already_running) { showTeamworkOverlay(); return; }
+        if (data.started) showTeamworkOverlay();
       });
+  }
+
+  function showTeamworkOverlay() {
+    document.getElementById('teamwork-overlay').classList.remove('hidden');
+    document.getElementById('teamwork-bar').style.width = '0%';
+    document.getElementById('teamwork-text').textContent = 'Fetching Teamwork tasks…';
+
+    const poll = setInterval(() => {
+      fetch('/sync-teamwork-status')
+        .then(r => r.json())
+        .then(data => {
+          const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 10;
+          document.getElementById('teamwork-bar').style.width = pct + '%';
+          document.getElementById('teamwork-text').textContent =
+            data.total > 0
+              ? `${data.progress} of ${data.total} domains processed`
+              : 'Fetching tasks…';
+          if (!data.running && data.progress > 0) {
+            clearInterval(poll);
+            document.getElementById('teamwork-text').textContent =
+              `Done — ${data.added} domain${data.added !== 1 ? 's' : ''} synced`;
+            document.getElementById('teamwork-bar').style.width = '100%';
+            document.getElementById('teamwork-bar').classList.replace('bg-green-500', 'bg-emerald-500');
+            setTimeout(() => {
+              document.getElementById('teamwork-overlay').classList.add('hidden');
+              location.reload();
+            }, 2000);
+          }
+        })
+        .catch(() => {});
+    }, 2000);
   }
 
   // ---- Fill Details ----
