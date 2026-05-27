@@ -115,6 +115,10 @@ def init_db():
             conn.execute('ALTER TABLE sites ADD COLUMN uptime_status TEXT DEFAULT "unknown"')
         if 'uptime_checked' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN uptime_checked INTEGER DEFAULT 0')
+        if 'is_stale' not in cols:
+            conn.execute('ALTER TABLE sites ADD COLUMN is_stale INTEGER DEFAULT 0')
+        if 'date_added' not in cols:
+            conn.execute('ALTER TABLE sites ADD COLUMN date_added INTEGER DEFAULT 0')
 
         # Email events — permanent local history of all Elastic Email events
         conn.execute('''
@@ -662,29 +666,31 @@ def do_refresh():
 
         _refresh_state['total'] = len(fetched)
         added = 0
+        now = int(time.time())
 
         with sqlite3.connect(DB_FILE) as conn:
             for domain, site in fetched.items():
                 cur = conn.execute('''
                     INSERT OR IGNORE INTO sites
                     (domain, name, hosting_provider, server_name, ip_address,
-                     is_manual, last_updated)
-                    VALUES (?, ?, ?, ?, ?, 0, ?)
+                     is_manual, is_stale, date_added, last_updated)
+                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
                 ''', (
                     site['domain'],
                     site.get('name', domain),
                     site.get('hosting_provider', ''),
                     site.get('server_name', ''),
                     site.get('ip_address', ''),
-                    int(time.time()),
+                    now, now,
                 ))
                 if cur.rowcount:
                     added += 1
                 else:
-                    # Update hosting metadata in case the site moved servers
+                    # Update hosting metadata; clear stale flag (site is back / still present)
                     conn.execute('''
                         UPDATE sites
-                        SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?
+                        SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?,
+                            is_stale = 0
                         WHERE domain = ? AND is_manual = 0
                     ''', (
                         site.get('name', domain),
@@ -694,6 +700,19 @@ def do_refresh():
                         domain,
                     ))
                 _refresh_state['progress'] += 1
+
+            # Mark any previously-tracked Cloudways/Kinsta site that's no longer in
+            # the API response as stale (don't delete — just flag it)
+            if fetched:
+                placeholders = ','.join('?' * len(fetched))
+                conn.execute(f'''
+                    UPDATE sites
+                    SET is_stale = 1
+                    WHERE is_manual = 0
+                      AND hosting_provider IN ('Cloudways', 'Kinsta')
+                      AND domain NOT IN ({placeholders})
+                ''', list(fetched.keys()))
+
             conn.commit()
 
         print(f'[Fetch Sites] Done — {added} new, {len(fetched) - added} updated at {datetime.now():%Y-%m-%d %H:%M}')
@@ -729,6 +748,16 @@ def index():
                 d['expiry_days'] = None
         else:
             d['expiry_days'] = None
+
+        # Format date_added for display
+        ts = d.get('date_added') or 0
+        if ts:
+            dt = datetime.fromtimestamp(ts)
+            day = str(dt.day)
+            d['date_added_str'] = f"{day} {dt.strftime('%b %Y')}"
+        else:
+            d['date_added_str'] = ''
+
         sites.append(d)
 
     last_updated = datetime.fromtimestamp(latest).strftime('%d %b %Y, %H:%M') if latest else None

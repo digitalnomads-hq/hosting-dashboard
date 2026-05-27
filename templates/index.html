@@ -343,7 +343,8 @@
                 data-staging="{{ '1' if 'cloudwaysapps.com' in site.domain else '0' }}"
                 data-teamwork="{{ '1' if site.teamwork_task_id else '0' }}"
                 data-assignee="{{ (site.teamwork_assignee or '') | lower }}"
-                data-uptime="{{ site.uptime_status or 'unknown' }}">
+                data-uptime="{{ site.uptime_status or 'unknown' }}"
+                data-stale="{{ site.is_stale or 0 }}">
 
               <!-- Site -->
               <td class="px-4 py-3">
@@ -372,14 +373,23 @@
 
               <!-- Host -->
               <td class="px-4 py-3">
-                <span class="badge host-{{ site.hosting_provider | lower }}">
-                  {{ site.hosting_provider }}
-                </span>
-                {% if site.hosting_provider in ('Cloudways', 'Kinsta') %}
-                <span class="badge ml-1" style="background:#dcfce7;color:#166534;">DNHQ Hosted</span>
-                {% endif %}
+                <div class="flex flex-wrap items-center gap-1">
+                  <span class="badge host-{{ site.hosting_provider | lower }}">
+                    {{ site.hosting_provider }}
+                  </span>
+                  {% if site.is_stale %}
+                  <span class="badge" style="background:#fef3c7;color:#92400e;" title="This site no longer appears in the {{ site.hosting_provider }} API">
+                    ⚠ No longer on {{ site.hosting_provider }}
+                  </span>
+                  {% elif site.hosting_provider in ('Cloudways', 'Kinsta') %}
+                  <span class="badge" style="background:#dcfce7;color:#166534;">DNHQ Hosted</span>
+                  {% endif %}
+                </div>
                 {% if site.server_name %}
                 <div class="text-xs text-slate-400 mt-1">{{ site.server_name }}</div>
+                {% endif %}
+                {% if site.date_added_str %}
+                <div class="text-xs text-slate-400 mt-0.5">Added {{ site.date_added_str }}</div>
                 {% endif %}
               </td>
 
@@ -484,39 +494,52 @@
 
               <!-- Actions -->
               <td class="px-4 py-3 text-right">
-                <div class="relative inline-block">
-                  <button onclick="toggleMenu(this)"
-                          class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
+                <div class="flex items-center justify-end gap-1">
+                  {% if site.is_stale %}
+                  <button onclick="removeSite('{{ site.domain }}')"
+                          class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 transition"
+                          title="Remove this site from the dashboard">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                     </svg>
+                    Remove
                   </button>
-                  <div class="menu-dropdown hidden absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-lg border border-slate-100 z-20 py-1">
-                    <button onclick="recheckSite('{{ site.domain }}', this); closeMenus()"
-                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
-                      <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+                  {% endif %}
+                  <div class="relative inline-block">
+                    <button onclick="toggleMenu(this)"
+                            class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/>
                       </svg>
-                      Re-check
                     </button>
-                    <button onclick="recheckUptime('{{ site.domain }}', this); closeMenus()"
-                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
-                      <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                      </svg>
-                      Check Uptime
-                    </button>
-                    <div class="border-t border-slate-100 my-1"></div>
-                    <button onclick="removeSite('{{ site.domain }}')"
-                            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition">
-                      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                      </svg>
-                      Delete
-                    </button>
+                    <div class="menu-dropdown hidden absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-lg border border-slate-100 z-20 py-1">
+                      <button onclick="recheckSite('{{ site.domain }}', this); closeMenus()"
+                              class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+                        </svg>
+                        Re-check
+                      </button>
+                      <button onclick="recheckUptime('{{ site.domain }}', this); closeMenus()"
+                              class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition">
+                        <svg class="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Check Uptime
+                      </button>
+                      <div class="border-t border-slate-100 my-1"></div>
+                      <button onclick="removeSite('{{ site.domain }}')"
+                              class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 hover:bg-red-50 transition">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               </td>
