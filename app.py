@@ -119,6 +119,8 @@ def init_db():
             conn.execute('ALTER TABLE sites ADD COLUMN is_stale INTEGER DEFAULT 0')
         if 'date_added' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN date_added INTEGER DEFAULT 0')
+        if 'hosting_created_at' not in cols:
+            conn.execute('ALTER TABLE sites ADD COLUMN hosting_created_at TEXT DEFAULT ""')
 
         # Email events — permanent local history of all Elastic Email events
         conn.execute('''
@@ -308,6 +310,24 @@ def detect_dns_provider(nameservers):
 
 
 # ---------------------------------------------------------------------------
+# Date helpers
+# ---------------------------------------------------------------------------
+
+def _parse_hosting_date(raw):
+    """Parse a created_at string from Cloudways or Kinsta into a YYYY-MM-DD string.
+    Handles ISO8601 (Kinsta) and MySQL datetime (Cloudways)."""
+    if not raw:
+        return ''
+    for fmt in ('%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ',
+                '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(raw[:26].rstrip('Z'), fmt.rstrip('Z')).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return raw[:10]   # fallback: first 10 chars
+
+
+# ---------------------------------------------------------------------------
 # Cloudways API
 # ---------------------------------------------------------------------------
 
@@ -339,12 +359,13 @@ def fetch_cloudways_sites(cw_cfg):
                 domain = raw_domain.removeprefix('www.').rstrip('.')
                 if domain:
                     sites.append({
-                        'domain':           domain,
-                        'name':             app_data.get('label', domain),
-                        'hosting_provider': 'Cloudways',
-                        'server_name':      server_label,
-                        'ip_address':       server_ip,
-                        'is_manual':        0,
+                        'domain':              domain,
+                        'name':                app_data.get('label', domain),
+                        'hosting_provider':    'Cloudways',
+                        'server_name':         server_label,
+                        'ip_address':          server_ip,
+                        'is_manual':           0,
+                        'hosting_created_at':  _parse_hosting_date(app_data.get('created_at', '')),
                     })
     except Exception as e:
         print(f'[Cloudways] Error: {e}')
@@ -395,12 +416,13 @@ def fetch_kinsta_sites(ki_cfg):
                 domain = future.result()
                 if domain:
                     sites.append({
-                        'domain':           domain,
-                        'name':             site.get('display_name') or site.get('name', domain),
-                        'hosting_provider': 'Kinsta',
-                        'server_name':      '',
-                        'ip_address':       '',
-                        'is_manual':        0,
+                        'domain':              domain,
+                        'name':                site.get('display_name') or site.get('name', domain),
+                        'hosting_provider':    'Kinsta',
+                        'server_name':         '',
+                        'ip_address':          '',
+                        'is_manual':           0,
+                        'hosting_created_at':  _parse_hosting_date(site.get('created_at', '')),
                     })
 
     except Exception as e:
@@ -670,33 +692,36 @@ def do_refresh():
 
         with sqlite3.connect(DB_FILE) as conn:
             for domain, site in fetched.items():
+                hosting_created = site.get('hosting_created_at', '')
                 cur = conn.execute('''
                     INSERT OR IGNORE INTO sites
                     (domain, name, hosting_provider, server_name, ip_address,
-                     is_manual, is_stale, date_added, last_updated)
-                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)
+                     is_manual, is_stale, date_added, hosting_created_at, last_updated)
+                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
                 ''', (
                     site['domain'],
                     site.get('name', domain),
                     site.get('hosting_provider', ''),
                     site.get('server_name', ''),
                     site.get('ip_address', ''),
-                    now, now,
+                    now, hosting_created, now,
                 ))
                 if cur.rowcount:
                     added += 1
                 else:
-                    # Update hosting metadata; clear stale flag (site is back / still present)
+                    # Update hosting metadata; clear stale flag; refresh creation date if we got one
                     conn.execute('''
                         UPDATE sites
                         SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?,
-                            is_stale = 0
+                            is_stale = 0,
+                            hosting_created_at = CASE WHEN ? != '' THEN ? ELSE hosting_created_at END
                         WHERE domain = ? AND is_manual = 0
                     ''', (
                         site.get('name', domain),
                         site.get('hosting_provider', ''),
                         site.get('server_name', ''),
                         site.get('ip_address', ''),
+                        hosting_created, hosting_created,
                         domain,
                     ))
                 _refresh_state['progress'] += 1
@@ -750,14 +775,27 @@ def index():
         else:
             d['expiry_days'] = None
 
-        # Format date_added for display
+        # Format date_added (dashboard tracking) for display
         ts = d.get('date_added') or 0
         if ts:
             dt = datetime.fromtimestamp(ts)
-            day = str(dt.day)
-            d['date_added_str'] = f"{day} {dt.strftime('%b %Y')}"
+            d['date_added_str'] = f"{dt.day} {dt.strftime('%b %Y')}"
         else:
             d['date_added_str'] = ''
+
+        # Format hosting_created_at (date created on Cloudways/Kinsta) for display & sort
+        hca = (d.get('hosting_created_at') or '').strip()
+        if hca:
+            try:
+                hdt = datetime.strptime(hca, '%Y-%m-%d')
+                d['hosting_created_str'] = f"{hdt.day} {hdt.strftime('%b %Y')}"
+                d['hosting_created_sort'] = hca   # YYYY-MM-DD sorts lexicographically
+            except Exception:
+                d['hosting_created_str'] = hca
+                d['hosting_created_sort'] = hca
+        else:
+            d['hosting_created_str'] = ''
+            d['hosting_created_sort'] = ''
 
         sites.append(d)
 

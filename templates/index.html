@@ -348,7 +348,7 @@
                 data-assignee="{{ (site.teamwork_assignee or '') | lower }}"
                 data-uptime="{{ site.uptime_status or 'unknown' }}"
                 data-stale="{{ site.is_stale or 0 }}"
-                data-added="{{ site.date_added or 0 }}">
+                data-added="{{ site.hosting_created_sort or '' }}">
 
               <!-- Site -->
               <td class="px-4 py-3">
@@ -466,9 +466,9 @@
                 {% endif %}
               </td>
 
-              <!-- Date Added -->
+              <!-- Date Added (on Cloudways / Kinsta) -->
               <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
-                {{ site.date_added_str or '—' }}
+                {{ site.hosting_created_str or '—' }}
               </td>
 
               <!-- Teamwork -->
@@ -935,10 +935,6 @@
       const rows  = Array.from(tbody.querySelectorAll('.site-row'));
       rows.sort((a, b) => {
         const key  = sortMap[col];
-        // Numeric sort for timestamp columns
-        if (col === 'added') {
-          return sortDir * ((parseInt(a.dataset[key]) || 0) - (parseInt(b.dataset[key]) || 0));
-        }
         const aVal = (a.dataset[key] || '').toLowerCase();
         const bVal = (b.dataset[key] || '').toLowerCase();
         return sortDir * aVal.localeCompare(bVal);
