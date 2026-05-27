@@ -645,7 +645,7 @@ def do_refresh():
     with _refresh_lock:
         if _refresh_state['running']:
             return
-        _refresh_state = {'running': True, 'progress': 0, 'total': 0, 'error': None}
+        _refresh_state = {'running': True, 'progress': 0, 'total': 0, 'added': 0, 'error': None}
 
     try:
         config   = load_config()
@@ -715,6 +715,7 @@ def do_refresh():
 
             conn.commit()
 
+        _refresh_state['added'] = added
         print(f'[Fetch Sites] Done — {added} new, {len(fetched) - added} updated at {datetime.now():%Y-%m-%d %H:%M}')
 
     except Exception as e:

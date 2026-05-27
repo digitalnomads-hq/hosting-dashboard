@@ -323,6 +323,9 @@
             <th data-sort="expiry" class="px-4 py-3 text-left font-semibold">
               Expiry <span class="sort-icon"></span>
             </th>
+            <th data-sort="added" class="px-4 py-3 text-left font-semibold">
+              Date Added <span class="sort-icon"></span>
+            </th>
             <th class="px-4 py-3 text-left font-semibold">Teamwork</th>
             <th class="px-4 py-3 text-left font-semibold w-10"></th>
           </tr>
@@ -344,7 +347,8 @@
                 data-teamwork="{{ '1' if site.teamwork_task_id else '0' }}"
                 data-assignee="{{ (site.teamwork_assignee or '') | lower }}"
                 data-uptime="{{ site.uptime_status or 'unknown' }}"
-                data-stale="{{ site.is_stale or 0 }}">
+                data-stale="{{ site.is_stale or 0 }}"
+                data-added="{{ site.date_added or 0 }}">
 
               <!-- Site -->
               <td class="px-4 py-3">
@@ -387,9 +391,6 @@
                 </div>
                 {% if site.server_name %}
                 <div class="text-xs text-slate-400 mt-1">{{ site.server_name }}</div>
-                {% endif %}
-                {% if site.date_added_str %}
-                <div class="text-xs text-slate-400 mt-0.5">Added {{ site.date_added_str }}</div>
                 {% endif %}
               </td>
 
@@ -463,6 +464,11 @@
                 {% else %}
                   <span class="text-slate-300">—</span>
                 {% endif %}
+              </td>
+
+              <!-- Date Added -->
+              <td class="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+                {{ site.date_added_str or '—' }}
               </td>
 
               <!-- Teamwork -->
@@ -549,7 +555,7 @@
 
           {% else %}
           <tr>
-            <td colspan="9" class="px-6 py-20 text-center">
+            <td colspan="10" class="px-6 py-20 text-center">
               <div class="text-slate-400">
                 <svg class="w-12 h-12 mx-auto mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
@@ -912,7 +918,7 @@
 
   // ---- Sort ----
   let sortCol = null, sortDir = 1;
-  const sortMap = { name: 'name', host: 'host', ip: 'ip', dns: 'dns', reg: 'reg', expiry: 'expiry' };
+  const sortMap = { name: 'name', host: 'host', ip: 'ip', dns: 'dns', reg: 'reg', expiry: 'expiry', added: 'added' };
 
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.addEventListener('click', () => {
@@ -929,6 +935,10 @@
       const rows  = Array.from(tbody.querySelectorAll('.site-row'));
       rows.sort((a, b) => {
         const key  = sortMap[col];
+        // Numeric sort for timestamp columns
+        if (col === 'added') {
+          return sortDir * ((parseInt(a.dataset[key]) || 0) - (parseInt(b.dataset[key]) || 0));
+        }
         const aVal = (a.dataset[key] || '').toLowerCase();
         const bVal = (b.dataset[key] || '').toLowerCase();
         return sortDir * aVal.localeCompare(bVal);
@@ -1022,25 +1032,48 @@
 
   // ---- Refresh ----
   function startRefresh() {
-    document.getElementById('refresh-overlay').classList.remove('hidden');
-    document.getElementById('progress-bar').style.width = '0%';
-    document.getElementById('progress-text').textContent = 'Connecting to APIs…';
+    const overlay  = document.getElementById('refresh-overlay');
+    const bar      = document.getElementById('progress-bar');
+    const text     = document.getElementById('progress-text');
+
+    overlay.classList.remove('hidden');
+    bar.style.width = '0%';
+    bar.className = bar.className.replace('bg-green-500', 'bg-sky-500');
+    text.textContent = 'Connecting to Cloudways & Kinsta…';
+
+    let sawRunning = false;
 
     fetch('/refresh', { method: 'POST' }).then(() => {
       const poll = setInterval(() => {
         fetch('/refresh-status')
           .then(r => r.json())
           .then(data => {
-            const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
-            document.getElementById('progress-bar').style.width = pct + '%';
-            document.getElementById('progress-text').textContent =
-              data.total > 0
-                ? `${data.progress} of ${data.total} sites`
-                : 'Fetching site list…';
+            if (data.running) sawRunning = true;
 
-            if (!data.running) {
+            const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 10;
+            bar.style.width = pct + '%';
+            text.textContent = data.total > 0
+              ? `${data.progress} of ${data.total} sites checked…`
+              : 'Fetching site list…';
+
+            if (!data.running && (sawRunning || data.total > 0)) {
               clearInterval(poll);
-              location.reload();
+              bar.style.width = '100%';
+              bar.classList.replace('bg-sky-500', 'bg-green-500');
+              if (data.error) {
+                text.textContent = `Error: ${data.error}`;
+              } else {
+                const added   = data.added || 0;
+                const total   = data.total || 0;
+                const updated = total - added;
+                text.textContent = added > 0
+                  ? `Done — ${added} new site${added !== 1 ? 's' : ''} added, ${updated} updated`
+                  : `Done — ${total} site${total !== 1 ? 's' : ''} up to date`;
+              }
+              setTimeout(() => {
+                overlay.classList.add('hidden');
+                location.reload();
+              }, 2500);
             }
           })
           .catch(() => {});
