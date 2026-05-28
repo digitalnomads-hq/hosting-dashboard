@@ -1131,19 +1131,24 @@ def recheck_site():
 
 
 def do_fill_details():
-    """Enrich every site with DNS, WHOIS, and IP org data.
-    Skips fields that are already filled to avoid redundant lookups."""
+    """Enrich sites that are missing registrar/DNS data.
+    Only processes sites where registrar is blank — skips already-enriched sites."""
     global _backfill_state
 
     with sqlite3.connect(DB_FILE) as conn:
-        rows = conn.execute('SELECT domain, ip_address FROM sites').fetchall()
+        rows = conn.execute('''
+            SELECT domain, ip_address FROM sites
+            WHERE is_stale = 0
+              AND (registrar IS NULL OR registrar = ''
+                   OR nameservers IS NULL OR nameservers = '' OR nameservers = '[]')
+        ''').fetchall()
 
     if not rows:
-        print('[Fill Details] Nothing to do.')
+        print('[Fill Details] Nothing to do — all sites already enriched.')
         return
 
     _backfill_state = {'running': True, 'progress': 0, 'total': len(rows), 'filled': 0}
-    print(f'[Fill Details] Enriching {len(rows)} sites…')
+    print(f'[Fill Details] Enriching {len(rows)} sites missing data…')
 
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
