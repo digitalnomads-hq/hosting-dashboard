@@ -126,6 +126,8 @@ def init_db():
             conn.execute('ALTER TABLE sites ADD COLUMN date_added INTEGER DEFAULT 0')
         if 'hosting_created_at' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN hosting_created_at TEXT DEFAULT ""')
+        if 'alt_domains' not in cols:
+            conn.execute('ALTER TABLE sites ADD COLUMN alt_domains TEXT DEFAULT "[]"')
 
         # Email events — permanent local history of all Elastic Email events
         conn.execute('''
@@ -362,16 +364,32 @@ def fetch_cloudways_sites(cw_cfg):
             for app_data in server.get('apps', []):
                 raw_domain = (app_data.get('cname') or app_data.get('app_fqdn', '')).strip()
                 domain = raw_domain.removeprefix('www.').rstrip('.')
-                if domain:
-                    sites.append({
-                        'domain':              domain,
-                        'name':                app_data.get('label', domain),
-                        'hosting_provider':    'Cloudways',
-                        'server_name':         server_label,
-                        'ip_address':          server_ip,
-                        'is_manual':           0,
-                        'hosting_created_at':  _parse_hosting_date(app_data.get('created_at', '')),
-                    })
+                if not domain:
+                    continue
+
+                # Collect any alias/additional domains attached to this app
+                alt_domains = []
+                for alias in app_data.get('aliases', []):
+                    a = str(alias).strip().removeprefix('www.').rstrip('.')
+                    if a and a != domain and not a.endswith('.cloudwaysapps.com'):
+                        alt_domains.append(a)
+                # Some Cloudways responses nest aliases under app_domains
+                for d_obj in app_data.get('app_domains', []):
+                    a = str(d_obj.get('domain', d_obj) if isinstance(d_obj, dict) else d_obj)
+                    a = a.strip().removeprefix('www.').rstrip('.')
+                    if a and a != domain and not a.endswith('.cloudwaysapps.com') and a not in alt_domains:
+                        alt_domains.append(a)
+
+                sites.append({
+                    'domain':              domain,
+                    'name':                app_data.get('label', domain),
+                    'hosting_provider':    'Cloudways',
+                    'server_name':         server_label,
+                    'ip_address':          server_ip,
+                    'is_manual':           0,
+                    'hosting_created_at':  _parse_hosting_date(app_data.get('created_at', '')),
+                    'alt_domains':         alt_domains,
+                })
     except Exception as e:
         print(f'[Cloudways] Error: {e}')
     return sites
@@ -381,21 +399,25 @@ def fetch_cloudways_sites(cw_cfg):
 # Kinsta API
 # ---------------------------------------------------------------------------
 
-def _kinsta_site_domain(site_id, headers):
-    """Fetch the primary live domain for a single Kinsta site."""
+def _kinsta_site_domains(site_id, headers):
+    """Fetch all live domains for a single Kinsta site.
+    Returns (primary_domain, [alt_domains]) or (None, [])."""
     try:
         r = requests.get(f'https://api.kinsta.com/v2/sites/{site_id}', headers=headers, timeout=20)
         r.raise_for_status()
         for env in r.json().get('site', {}).get('environments', []):
             if env.get('name') == 'live' or env.get('display_name', '').lower() == 'live':
+                domains = []
                 for d in env.get('domains', []):
                     name = d.get('name', '') if isinstance(d, dict) else str(d)
                     clean = name.removeprefix('www.').rstrip('.')
                     if clean and not clean.endswith('.kinsta.cloud') and not clean.startswith('*.'):
-                        return clean
+                        domains.append(clean)
+                if domains:
+                    return domains[0], domains[1:]
     except Exception as e:
         print(f'[Kinsta] Error fetching site {site_id}: {e}')
-    return None
+    return None, []
 
 
 def fetch_kinsta_sites(ki_cfg):
@@ -414,20 +436,21 @@ def fetch_kinsta_sites(ki_cfg):
         # Environments/domains require a per-site call — do it concurrently
         with ThreadPoolExecutor(max_workers=10) as ex:
             future_to_site = {
-                ex.submit(_kinsta_site_domain, s['id'], headers): s
+                ex.submit(_kinsta_site_domains, s['id'], headers): s
                 for s in site_list
             }
             for future, site in future_to_site.items():
-                domain = future.result()
-                if domain:
+                primary, alts = future.result()
+                if primary:
                     sites.append({
-                        'domain':              domain,
-                        'name':                site.get('display_name') or site.get('name', domain),
+                        'domain':              primary,
+                        'name':                site.get('display_name') or site.get('name', primary),
                         'hosting_provider':    'Kinsta',
                         'server_name':         '',
                         'ip_address':          '',
                         'is_manual':           0,
                         'hosting_created_at':  _parse_hosting_date(site.get('created_at', '')),
+                        'alt_domains':         alts,
                     })
 
     except Exception as e:
@@ -616,18 +639,30 @@ def do_sync_teamwork():
     _teamwork_state['total'] = len(domain_map)
 
     with sqlite3.connect(DB_FILE) as conn:
-        existing = {r[0] for r in conn.execute('SELECT domain FROM sites').fetchall()}
+        rows = conn.execute('SELECT domain, alt_domains FROM sites').fetchall()
 
+    # Build reverse lookup: every domain (primary + alts) → primary domain in DB
+    domain_to_primary = {}
+    for primary, alt_json in rows:
+        domain_to_primary[primary] = primary
+        for alt in json.loads(alt_json or '[]'):
+            domain_to_primary[alt.strip().removeprefix('www.').rstrip('.')] = primary
+
+    existing_primaries = set(domain_to_primary.values())
+
+    with sqlite3.connect(DB_FILE) as conn:
         # Clear existing teamwork data
         conn.execute('UPDATE sites SET teamwork_task_id = "", teamwork_assignee = ""')
         matched = 0
         new_domains = []
 
         for domain, info in domain_map.items():
-            if domain in existing:
+            # Check exact match first, then check if it's an alt domain of a known site
+            primary = domain_to_primary.get(domain)
+            if primary:
                 conn.execute(
                     'UPDATE sites SET teamwork_task_id = ?, teamwork_assignee = ? WHERE domain = ?',
-                    (info['task_id'], info['assignee'], domain)
+                    (info['task_id'], info['assignee'], primary)
                 )
                 matched += 1
             else:
@@ -709,27 +744,29 @@ def do_refresh():
         with sqlite3.connect(DB_FILE) as conn:
             for domain, site in fetched.items():
                 hosting_created = site.get('hosting_created_at', '')
+                alt_domains_json = json.dumps(site.get('alt_domains', []))
                 cur = conn.execute('''
                     INSERT OR IGNORE INTO sites
                     (domain, name, hosting_provider, server_name, ip_address,
-                     is_manual, is_stale, date_added, hosting_created_at, last_updated)
-                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+                     is_manual, is_stale, date_added, hosting_created_at, alt_domains, last_updated)
+                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
                 ''', (
                     site['domain'],
                     site.get('name', domain),
                     site.get('hosting_provider', ''),
                     site.get('server_name', ''),
                     site.get('ip_address', ''),
-                    now, hosting_created, now,
+                    now, hosting_created, alt_domains_json, now,
                 ))
                 if cur.rowcount:
                     added += 1
                 else:
-                    # Update hosting metadata; clear stale flag; refresh creation date if we got one
+                    # Update hosting metadata; clear stale flag; refresh creation date and alt domains
                     conn.execute('''
                         UPDATE sites
                         SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?,
                             is_stale = 0,
+                            alt_domains = ?,
                             hosting_created_at = CASE WHEN ? != '' THEN ? ELSE hosting_created_at END
                         WHERE domain = ? AND is_manual = 0
                     ''', (
@@ -737,6 +774,7 @@ def do_refresh():
                         site.get('hosting_provider', ''),
                         site.get('server_name', ''),
                         site.get('ip_address', ''),
+                        alt_domains_json,
                         hosting_created, hosting_created,
                         domain,
                     ))
@@ -781,6 +819,7 @@ def index():
     for r in rows:
         d = dict(r)
         d['nameservers'] = json.loads(d.get('nameservers') or '[]')
+        d['alt_domains'] = json.loads(d.get('alt_domains') or '[]')
         # Expiry warning: days remaining
         if d.get('expiry_date'):
             try:
