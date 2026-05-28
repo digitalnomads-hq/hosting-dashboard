@@ -918,12 +918,49 @@ def index():
         p = s['hosting_provider'] or 'Unknown'
         providers[p] = providers.get(p, 0) + 1
 
+    # Expiry alert counts
+    expiring_30  = sum(1 for s in sites if s.get('expiry_days') is not None and 0 <= s['expiry_days'] < 30)
+    expiring_90  = sum(1 for s in sites if s.get('expiry_days') is not None and 30 <= s['expiry_days'] < 90)
+    expired      = sum(1 for s in sites if s.get('expiry_days') is not None and s['expiry_days'] < 0)
+
+    # "Missing task" count — Cloudways/Kinsta sites with no Teamwork task
+    no_teamwork  = sum(1 for s in sites
+                       if not s.get('teamwork_task_id')
+                       and s.get('hosting_provider') in ('Cloudways', 'Kinsta')
+                       and not s.get('is_stale'))
+
+    # "Not enriched" count — non-manual, non-stale sites with no registrar data yet
+    not_enriched = sum(1 for s in sites
+                       if not s.get('registrar')
+                       and not s.get('is_stale')
+                       and not s.get('is_manual'))
+
+    # DNS mismatch flag per site — Cloudways/Kinsta site that has been enriched
+    # (has a registrar) but no IP resolved, suggesting DNS isn't pointed there
+    for s in sites:
+        if (s.get('hosting_provider') in ('Cloudways', 'Kinsta')
+                and not s.get('is_stale')
+                and s.get('registrar')
+                and not s.get('ip_address')):
+            s['dns_mismatch'] = True
+        else:
+            s['dns_mismatch'] = False
+
+    # Unique registrars for filter dropdown (non-empty, sorted)
+    registrars = sorted({s['registrar'] for s in sites if s.get('registrar')})
+
     return render_template(
         'index.html',
         sites=sites,
         last_updated=last_updated,
         providers=providers,
         total=len(sites),
+        expiring_30=expiring_30,
+        expiring_90=expiring_90,
+        expired=expired,
+        no_teamwork=no_teamwork,
+        not_enriched=not_enriched,
+        registrars=registrars,
     )
 
 
