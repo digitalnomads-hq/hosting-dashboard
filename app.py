@@ -815,6 +815,22 @@ def do_refresh():
                       AND domain NOT IN ({placeholders})
                 ''', list(fetched.keys()))
 
+            # Mark any site whose domain is now known to be an alt domain of
+            # another site as stale — e.g. a Teamwork-synced row for
+            # werlemanproperty.com.au when it's really an alias of
+            # werlemanbuyersagents.com.au
+            all_alt_domains = set()
+            for s in fetched.values():
+                for a in s.get('alt_domains', []):
+                    all_alt_domains.add(a)
+            if all_alt_domains:
+                placeholders2 = ','.join('?' * len(all_alt_domains))
+                conn.execute(f'''
+                    UPDATE sites SET is_stale = 1
+                    WHERE domain IN ({placeholders2})
+                      AND domain NOT IN ({','.join('?' * len(fetched))})
+                ''', list(all_alt_domains) + list(fetched.keys()))
+
             conn.commit()
 
         _refresh_state['added'] = added
