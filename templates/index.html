@@ -1227,43 +1227,43 @@
 
   // ---- Sync Teamwork ----
   function startTeamworkSync() {
+    const overlay = document.getElementById('teamwork-overlay');
+    const bar     = document.getElementById('teamwork-bar');
+    const text    = document.getElementById('teamwork-text');
+
+    overlay.classList.remove('hidden');
+    bar.style.width = '10%';
+    bar.className = bar.className.replace('bg-emerald-500', 'bg-green-500');
+    text.textContent = 'Fetching Teamwork tasks…';
+
+    let pct = 10;
+    const ticker = setInterval(() => {
+      pct = Math.min(pct + 4, 85);
+      bar.style.width = pct + '%';
+      if (pct > 30) text.textContent = 'Matching domains…';
+    }, 800);
+
     fetch('/sync-teamwork', { method: 'POST' })
       .then(r => r.json())
       .then(data => {
-        if (data.already_running) { showTeamworkOverlay(); return; }
-        if (data.started) showTeamworkOverlay();
+        clearInterval(ticker);
+        bar.style.width = '100%';
+        bar.classList.replace('bg-green-500', 'bg-emerald-500');
+        const matched = (data.total || 0) - (data.added || 0);
+        const added   = data.added || 0;
+        text.textContent = `Done — ${matched} matched, ${added} new site${added !== 1 ? 's' : ''} added`;
+        setTimeout(() => {
+          overlay.classList.add('hidden');
+          location.reload();
+        }, 2500);
+      })
+      .catch(() => {
+        clearInterval(ticker);
+        bar.style.width = '100%';
+        bar.classList.replace('bg-green-500', 'bg-red-500');
+        text.textContent = 'Something went wrong — please try again.';
+        setTimeout(() => overlay.classList.add('hidden'), 3000);
       });
-  }
-
-  function showTeamworkOverlay() {
-    document.getElementById('teamwork-overlay').classList.remove('hidden');
-    document.getElementById('teamwork-bar').style.width = '0%';
-    document.getElementById('teamwork-text').textContent = 'Fetching Teamwork tasks…';
-
-    const poll = setInterval(() => {
-      fetch('/sync-teamwork-status')
-        .then(r => r.json())
-        .then(data => {
-          const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 10;
-          document.getElementById('teamwork-bar').style.width = pct + '%';
-          document.getElementById('teamwork-text').textContent =
-            data.total > 0
-              ? `${data.progress} of ${data.total} domains processed`
-              : 'Fetching tasks…';
-          if (!data.running && data.progress > 0) {
-            clearInterval(poll);
-            document.getElementById('teamwork-text').textContent =
-              `Done — ${data.added} domain${data.added !== 1 ? 's' : ''} synced`;
-            document.getElementById('teamwork-bar').style.width = '100%';
-            document.getElementById('teamwork-bar').classList.replace('bg-green-500', 'bg-emerald-500');
-            setTimeout(() => {
-              document.getElementById('teamwork-overlay').classList.add('hidden');
-              location.reload();
-            }, 2000);
-          }
-        })
-        .catch(() => {});
-    }, 2000);
   }
 
   // ---- Fill Details ----

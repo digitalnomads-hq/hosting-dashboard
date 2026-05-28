@@ -648,12 +648,21 @@ def fetch_teamwork_tasks(tw_cfg):
 
 
 def do_sync_teamwork():
+    """Match Teamwork tasks to sites in the DB and persist the results.
+
+    Phase 1 (fast): fetch tasks, match to existing sites, write incrementally.
+    Phase 2 (slow): stub-insert genuinely new domains so they appear in the
+    dashboard; Fill Details will enrich them later.
+
+    Written to be safe against early termination — each match is committed
+    individually so no data is lost if the process is interrupted.
+    """
     global _teamwork_state
     _teamwork_state = {'running': True, 'progress': 0, 'total': 0, 'added': 0}
 
     config = load_config()
     tw_cfg = config.get('teamwork', {})
-    if not tw_cfg:
+    if not tw_cfg.get('api_key') or not tw_cfg.get('project_id'):
         print('[Teamwork sync] No teamwork config found.')
         _teamwork_state['running'] = False
         return
@@ -669,67 +678,70 @@ def do_sync_teamwork():
     print(f'[Teamwork sync] Found {len(domain_map)} domain tasks')
     _teamwork_state['total'] = len(domain_map)
 
+    # Build reverse lookup: every domain (primary + alts) → primary domain in DB
     with sqlite3.connect(DB_FILE) as conn:
         rows = conn.execute('SELECT domain, alt_domains FROM sites').fetchall()
 
-    # Build reverse lookup: every domain (primary + alts) → primary domain in DB
     domain_to_primary = {}
     for primary, alt_json in rows:
         domain_to_primary[primary] = primary
         for alt in json.loads(alt_json or '[]'):
             domain_to_primary[alt.strip().removeprefix('www.').rstrip('.')] = primary
 
-    existing_primaries = set(domain_to_primary.values())
-
+    # --- Phase 1: clear then incrementally re-match ---
+    # Clear in one shot, then commit each match individually so a crash
+    # mid-loop doesn't leave everything blank.
     with sqlite3.connect(DB_FILE) as conn:
-        # Clear existing teamwork data
         conn.execute('UPDATE sites SET teamwork_task_id = "", teamwork_assignee = ""')
-        matched = 0
-        new_domains = []
+        conn.commit()
 
-        for domain, info in domain_map.items():
-            # Check exact match first, then check if it's an alt domain of a known site
-            primary = domain_to_primary.get(domain)
-            if primary:
+    matched = 0
+    new_domains = []
+
+    for domain, info in domain_map.items():
+        primary = domain_to_primary.get(domain)
+        if primary:
+            with sqlite3.connect(DB_FILE) as conn:
                 conn.execute(
                     'UPDATE sites SET teamwork_task_id = ?, teamwork_assignee = ? WHERE domain = ?',
                     (info['task_id'], info['assignee'], primary)
                 )
-                matched += 1
-            else:
-                new_domains.append((domain, info))
-            _teamwork_state['progress'] += 1
+                conn.commit()
+            matched += 1
+        else:
+            new_domains.append((domain, info))
+        _teamwork_state['progress'] += 1
 
-        conn.commit()
+    print(f'[Teamwork sync] Matched {matched}/{len(domain_map)} — {len(new_domains)} new domains to add…')
 
-    print(f'[Teamwork sync] Matched {matched}/{len(domain_map)} — enriching {len(new_domains)} new domains…')
-
+    # --- Phase 2: stub-insert new domains (no DNS/WHOIS — Fill Details handles that) ---
     added = 0
     for domain, info in new_domains:
         try:
-            ip, nameservers = lookup_dns(domain)
-            registrar, expiry = lookup_whois(domain)
-            ip_org = lookup_ip_org(ip) if ip else ''
             with sqlite3.connect(DB_FILE) as conn:
-                conn.execute('''
+                cur = conn.execute('''
                     INSERT OR IGNORE INTO sites
-                    (domain, name, hosting_provider, server_name, ip_address, ip_org,
-                     registrar, expiry_date, nameservers, dns_provider,
-                     notes, is_manual, last_updated, teamwork_task_id, teamwork_assignee)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (domain, name, hosting_provider, notes, is_manual,
+                     date_added, last_updated, teamwork_task_id, teamwork_assignee)
+                    VALUES (?, ?, 'External', 'Added via Teamwork sync', 1,
+                            ?, ?, ?, ?)
                 ''', (
-                    domain, domain, 'External', '',
-                    ip or '', ip_org,
-                    registrar or '', expiry or '',
-                    json.dumps(nameservers),
-                    detect_dns_provider(nameservers),
-                    'Added via Teamwork sync', 1,
-                    int(time.time()),
+                    domain, domain,
+                    int(time.time()), int(time.time()),
                     info['task_id'], info['assignee'],
                 ))
-            added += 1
-            print(f'[Teamwork sync] Added {domain} ({info["assignee"]})')
-            time.sleep(1)
+                conn.commit()
+            if cur.rowcount:
+                added += 1
+                print(f'[Teamwork sync] Added {domain} ({info["assignee"]})')
+            else:
+                # Row exists (different provider) — just update the task link
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.execute(
+                        'UPDATE sites SET teamwork_task_id = ?, teamwork_assignee = ? WHERE domain = ?',
+                        (info['task_id'], info['assignee'], domain)
+                    )
+                    conn.commit()
         except Exception as e:
             print(f'[Teamwork sync] Failed to add {domain}: {e}')
 
@@ -1228,9 +1240,8 @@ def backfill_registrars_status():
 def sync_teamwork():
     if _teamwork_state.get('running'):
         return jsonify({'started': False, 'already_running': True})
-    thread = threading.Thread(target=do_sync_teamwork, daemon=True)
-    thread.start()
-    return jsonify({'started': True})
+    do_sync_teamwork()   # run synchronously so Fly.io auto-stop can't kill it mid-commit
+    return jsonify({**_teamwork_state, 'done': True})
 
 
 @app.route('/sync-teamwork-status')
