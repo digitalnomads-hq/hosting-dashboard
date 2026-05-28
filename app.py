@@ -146,6 +146,11 @@ def init_db():
             except Exception:
                 pass
 
+        # Remove any sites whose domain has no dot — these are bogus entries
+        # created by the Teamwork sync matching bare task names like
+        # "authority-building", "communication", "sales", etc.
+        conn.execute("DELETE FROM sites WHERE domain NOT LIKE '%.%'")
+
         # Email events — permanent local history of all Elastic Email events
         conn.execute('''
             CREATE TABLE IF NOT EXISTS email_events (
@@ -593,7 +598,10 @@ _TW_SKIP = {'dont delete', 'check tpp for domain renewals'}
 
 def _tw_clean_domain(raw):
     url = re.sub(r'^https?://', '', str(raw).strip().lower())
-    return url.rstrip('/').removeprefix('www.').split('/')[0]
+    domain = url.rstrip('/').removeprefix('www.').split('/')[0]
+    # Must contain a dot to be a real domain (filters bare words like
+    # "authority-building", "communication", "sales", etc.)
+    return domain if '.' in domain else ''
 
 
 def fetch_teamwork_tasks(tw_cfg):
