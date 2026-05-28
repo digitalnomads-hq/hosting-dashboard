@@ -1130,54 +1130,47 @@
     const text     = document.getElementById('progress-text');
 
     overlay.classList.remove('hidden');
-    bar.style.width = '0%';
+    bar.style.width = '10%';
     bar.className = bar.className.replace('bg-green-500', 'bg-sky-500');
     text.textContent = 'Connecting to Cloudways & Kinsta…';
 
-    let sawRunning = false;
+    // Animate bar while waiting
+    let pct = 10;
+    const ticker = setInterval(() => {
+      pct = Math.min(pct + 3, 85);
+      bar.style.width = pct + '%';
+      if (pct > 30) text.textContent = 'Fetching site list…';
+    }, 800);
 
-    fetch('/refresh', { method: 'POST' }).then(() => {
-      const poll = setInterval(() => {
-        fetch('/refresh-status')
-          .then(r => r.json())
-          .then(data => {
-            if (data.running) sawRunning = true;
-
-            const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 10;
-            bar.style.width = pct + '%';
-            text.textContent = data.total > 0
-              ? `${data.progress} of ${data.total} sites checked…`
-              : 'Fetching site list…';
-
-            if (!data.running && (sawRunning || data.total > 0)) {
-              clearInterval(poll);
-              bar.style.width = '100%';
-              bar.classList.replace('bg-sky-500', 'bg-green-500');
-              if (data.error) {
-                text.textContent = `Error: ${data.error}`;
-              } else {
-                const added   = data.added || 0;
-                const total   = data.total || 0;
-                const updated = total - added;
-                text.textContent = added > 0
-                  ? `Done — ${added} new site${added !== 1 ? 's' : ''} added, ${updated} updated`
-                  : `Done — ${total} site${total !== 1 ? 's' : ''} up to date`;
-              }
-              setTimeout(() => {
-                overlay.classList.add('hidden');
-                location.reload();
-              }, 2500);
-            }
-          })
-          .catch(() => {});
-      }, 1200);
-    });
+    fetch('/refresh', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        clearInterval(ticker);
+        bar.style.width = '100%';
+        bar.classList.replace('bg-sky-500', 'bg-green-500');
+        if (data.error) {
+          text.textContent = `Error: ${data.error}`;
+        } else {
+          const added   = data.added || 0;
+          const total   = data.total || 0;
+          const updated = total - added;
+          text.textContent = added > 0
+            ? `Done — ${added} new site${added !== 1 ? 's' : ''} added, ${updated} updated`
+            : `Done — ${total} site${total !== 1 ? 's' : ''} up to date`;
+        }
+        setTimeout(() => {
+          overlay.classList.add('hidden');
+          location.reload();
+        }, 2500);
+      })
+      .catch(err => {
+        clearInterval(ticker);
+        bar.style.width = '100%';
+        bar.classList.replace('bg-sky-500', 'bg-red-500');
+        text.textContent = 'Something went wrong — please try again.';
+        setTimeout(() => overlay.classList.add('hidden'), 3000);
+      });
   }
-
-  // Auto-resume overlay if server restarted mid-refresh
-  {% if refresh_running %}
-  startRefresh();
-  {% endif %}
 
   // ---- Add site modal ----
   function openAddModal()  { document.getElementById('add-modal').classList.remove('hidden'); }

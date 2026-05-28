@@ -877,16 +877,18 @@ def index():
         last_updated=last_updated,
         providers=providers,
         total=len(sites),
-        refresh_running=_refresh_state['running'],
     )
 
 
 @app.route('/refresh', methods=['POST'])
 def refresh():
-    if not _refresh_state['running']:
-        thread = threading.Thread(target=do_refresh, daemon=True)
-        thread.start()
-    return jsonify({'started': True})
+    """Run the fetch synchronously and return the result directly.
+    This avoids state-loss when Fly.io auto-stops the machine between the
+    POST and the polling requests."""
+    if _refresh_state['running']:
+        return jsonify({'already_running': True})
+    do_refresh()   # blocks until done (Cloudways+Kinsta only, typically <15s)
+    return jsonify({**_refresh_state, 'done': True})
 
 
 @app.route('/refresh-status')
