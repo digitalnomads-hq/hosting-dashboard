@@ -129,6 +129,23 @@ def init_db():
         if 'alt_domains' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN alt_domains TEXT DEFAULT "[]"')
 
+        # One-time: deduplicate and strip wildcards from stored alt_domains
+        for row in conn.execute("SELECT domain, alt_domains FROM sites WHERE alt_domains IS NOT NULL AND alt_domains != '[]'").fetchall():
+            try:
+                raw = json.loads(row[1] or '[]')
+                seen_d = set()
+                cleaned = []
+                for a in raw:
+                    a = str(a).strip().removeprefix('www.').rstrip('.')
+                    if a and not a.startswith('*.') and a not in seen_d:
+                        cleaned.append(a)
+                        seen_d.add(a)
+                if cleaned != raw:
+                    conn.execute('UPDATE sites SET alt_domains = ? WHERE domain = ?',
+                                 (json.dumps(cleaned), row[0]))
+            except Exception:
+                pass
+
         # Email events — permanent local history of all Elastic Email events
         conn.execute('''
             CREATE TABLE IF NOT EXISTS email_events (
@@ -368,17 +385,19 @@ def fetch_cloudways_sites(cw_cfg):
                     continue
 
                 # Collect any alias/additional domains attached to this app
+                seen = {domain}
                 alt_domains = []
-                for alias in app_data.get('aliases', []):
-                    a = str(alias).strip().removeprefix('www.').rstrip('.')
-                    if a and a != domain and not a.endswith('.cloudwaysapps.com'):
-                        alt_domains.append(a)
-                # Some Cloudways responses nest aliases under app_domains
+                all_aliases = list(app_data.get('aliases', []))
                 for d_obj in app_data.get('app_domains', []):
-                    a = str(d_obj.get('domain', d_obj) if isinstance(d_obj, dict) else d_obj)
-                    a = a.strip().removeprefix('www.').rstrip('.')
-                    if a and a != domain and not a.endswith('.cloudwaysapps.com') and a not in alt_domains:
+                    raw = d_obj.get('domain', d_obj) if isinstance(d_obj, dict) else d_obj
+                    all_aliases.append(str(raw))
+                for alias in all_aliases:
+                    a = str(alias).strip().removeprefix('www.').rstrip('.')
+                    if (a and a not in seen
+                            and not a.endswith('.cloudwaysapps.com')
+                            and not a.startswith('*.')):
                         alt_domains.append(a)
+                        seen.add(a)
 
                 sites.append({
                     'domain':              domain,
@@ -407,12 +426,16 @@ def _kinsta_site_domains(site_id, headers):
         r.raise_for_status()
         for env in r.json().get('site', {}).get('environments', []):
             if env.get('name') == 'live' or env.get('display_name', '').lower() == 'live':
+                seen = set()
                 domains = []
                 for d in env.get('domains', []):
                     name = d.get('name', '') if isinstance(d, dict) else str(d)
                     clean = name.removeprefix('www.').rstrip('.')
-                    if clean and not clean.endswith('.kinsta.cloud') and not clean.startswith('*.'):
+                    if (clean and clean not in seen
+                            and not clean.endswith('.kinsta.cloud')
+                            and not clean.startswith('*.')):
                         domains.append(clean)
+                        seen.add(clean)
                 if domains:
                     return domains[0], domains[1:]
     except Exception as e:
