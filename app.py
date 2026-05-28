@@ -128,6 +128,8 @@ def init_db():
             conn.execute('ALTER TABLE sites ADD COLUMN hosting_created_at TEXT DEFAULT ""')
         if 'alt_domains' not in cols:
             conn.execute('ALTER TABLE sites ADD COLUMN alt_domains TEXT DEFAULT "[]"')
+        if 'server_ip' not in cols:
+            conn.execute('ALTER TABLE sites ADD COLUMN server_ip TEXT DEFAULT ""')
 
         # One-time: deduplicate and strip wildcards from stored alt_domains
         for row in conn.execute("SELECT domain, alt_domains FROM sites WHERE alt_domains IS NOT NULL AND alt_domains != '[]'").fetchall():
@@ -409,7 +411,8 @@ def fetch_cloudways_sites(cw_cfg):
                     'name':                app_data.get('label', domain),
                     'hosting_provider':    'Cloudways',
                     'server_name':         server_label,
-                    'ip_address':          server_ip,
+                    'ip_address':          server_ip,   # overwritten by Fill Details DNS lookup
+                    'server_ip':           server_ip,   # permanent reference IP from Cloudways API
                     'is_manual':           0,
                     'hosting_created_at':  _parse_hosting_date(app_data.get('created_at', '')),
                     'alt_domains':         alt_domains,
@@ -788,27 +791,30 @@ def do_refresh():
             for domain, site in fetched.items():
                 hosting_created = site.get('hosting_created_at', '')
                 alt_domains_json = json.dumps(site.get('alt_domains', []))
+                server_ip = site.get('server_ip', '')
                 cur = conn.execute('''
                     INSERT OR IGNORE INTO sites
-                    (domain, name, hosting_provider, server_name, ip_address,
+                    (domain, name, hosting_provider, server_name, ip_address, server_ip,
                      is_manual, is_stale, date_added, hosting_created_at, alt_domains, last_updated)
-                    VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)
                 ''', (
                     site['domain'],
                     site.get('name', domain),
                     site.get('hosting_provider', ''),
                     site.get('server_name', ''),
                     site.get('ip_address', ''),
+                    server_ip,
                     now, hosting_created, alt_domains_json, now,
                 ))
                 if cur.rowcount:
                     added += 1
                 else:
-                    # Update hosting metadata; clear stale flag; refresh creation date and alt domains
+                    # Update hosting metadata; clear stale flag; refresh creation date, alt domains, server_ip
                     conn.execute('''
                         UPDATE sites
-                        SET name = ?, hosting_provider = ?, server_name = ?, ip_address = ?,
+                        SET name = ?, hosting_provider = ?, server_name = ?,
                             is_stale = 0,
+                            server_ip = ?,
                             alt_domains = ?,
                             hosting_created_at = CASE WHEN ? != '' THEN ? ELSE hosting_created_at END
                         WHERE domain = ? AND is_manual = 0
@@ -816,7 +822,7 @@ def do_refresh():
                         site.get('name', domain),
                         site.get('hosting_provider', ''),
                         site.get('server_name', ''),
-                        site.get('ip_address', ''),
+                        server_ip,
                         alt_domains_json,
                         hosting_created, hosting_created,
                         domain,
@@ -947,16 +953,41 @@ def index():
                        and not s.get('is_stale')
                        and not s.get('is_manual'))
 
-    # DNS mismatch flag per site — Cloudways/Kinsta site that has been enriched
-    # (has a registrar) but no IP resolved, suggesting DNS isn't pointed there
+    # Hosting mismatch: domain's DNS resolves to a different IP than the hosting
+    # provider's server — meaning the site has moved off DNHQ infrastructure.
+    #
+    # Cloudways: compare ip_address (DNS-resolved) with server_ip (Cloudways API)
+    # Kinsta:    Kinsta runs on Google Cloud ± Cloudflare; flag if ip_org is neither
+    # Both:      also flag if enriched but ip_address is empty (DNS not resolving)
     for s in sites:
-        if (s.get('hosting_provider') in ('Cloudways', 'Kinsta')
-                and not s.get('is_stale')
-                and s.get('registrar')
-                and not s.get('ip_address')):
-            s['dns_mismatch'] = True
-        else:
-            s['dns_mismatch'] = False
+        provider   = s.get('hosting_provider', '')
+        server_ip  = (s.get('server_ip') or '').strip()
+        ip_address = (s.get('ip_address') or '').strip()
+        ip_org     = (s.get('ip_org') or '').lower()
+        enriched   = bool(s.get('registrar'))
+
+        mismatch = False
+        mismatch_reason = ''
+
+        if not s.get('is_stale') and provider in ('Cloudways', 'Kinsta'):
+            if provider == 'Cloudways' and server_ip and ip_address:
+                if ip_address != server_ip:
+                    mismatch = True
+                    mismatch_reason = f'Resolves to {ip_address}, expected {server_ip}'
+            elif provider == 'Cloudways' and server_ip and enriched and not ip_address:
+                mismatch = True
+                mismatch_reason = 'Domain not resolving'
+            elif provider == 'Kinsta' and enriched and ip_address:
+                kinsta_orgs = ('google', 'cloudflare', 'kinsta')
+                if not any(o in ip_org for o in kinsta_orgs):
+                    mismatch = True
+                    mismatch_reason = f'IP org "{s.get("ip_org")}" not on Google/Cloudflare'
+            elif provider == 'Kinsta' and enriched and not ip_address:
+                mismatch = True
+                mismatch_reason = 'Domain not resolving'
+
+        s['dns_mismatch'] = mismatch
+        s['dns_mismatch_reason'] = mismatch_reason
 
     # Unique registrars for filter dropdown (non-empty, sorted)
     registrars = sorted({s['registrar'] for s in sites if s.get('registrar')})
@@ -1149,7 +1180,7 @@ def do_fill_details():
 
     with sqlite3.connect(DB_FILE) as conn:
         rows = conn.execute('''
-            SELECT domain, ip_address FROM sites
+            SELECT domain, server_ip FROM sites
             WHERE is_stale = 0
               AND (registrar IS NULL OR registrar = ''
                    OR nameservers IS NULL OR nameservers = '' OR nameservers = '[]')
@@ -1173,19 +1204,16 @@ def do_fill_details():
             pass
 
     with sqlite3.connect(DB_FILE) as conn:
-        for i, (domain, existing_ip) in enumerate(rows, 1):
+        for i, (domain, server_ip) in enumerate(rows, 1):
             try:
                 apex = domain.removeprefix('www.')
                 in_cloudns = apex in cloudns_zones
 
-                # --- DNS / IP ---
-                if in_cloudns and cloudns_cfg:
-                    ip = fetch_cloudns_a_record(apex, cloudns_cfg) or existing_ip or ''
-                else:
-                    ip = existing_ip or ''
-
+                # --- DNS / IP: always resolve fresh so ip_address reflects real DNS ---
                 dns_ip, nameservers = lookup_dns(domain)
-                if not ip:
+                if in_cloudns and cloudns_cfg:
+                    ip = fetch_cloudns_a_record(apex, cloudns_cfg) or dns_ip or ''
+                else:
                     ip = dns_ip or ''
 
                 dns_provider = 'ClouDNS' if in_cloudns else detect_dns_provider(nameservers)

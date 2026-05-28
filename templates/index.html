@@ -502,8 +502,9 @@
                     ⚠ No longer on {{ site.hosting_provider }}
                   </span>
                   {% elif site.dns_mismatch %}
-                  <span class="badge" style="background:#fee2e2;color:#991b1b;" title="Site is on {{ site.hosting_provider }} but DNS isn't resolving — check domain is pointed here">
-                    ⚠ DNS not resolving
+                  <span class="badge" style="background:#fee2e2;color:#991b1b;"
+                        title="{{ site.dns_mismatch_reason or 'Domain may not be pointed to DNHQ servers' }}">
+                    ⚠ Not on DNHQ servers
                   </span>
                   {% elif site.hosting_provider in ('Cloudways', 'Kinsta') %}
                   <span class="badge" style="background:#dcfce7;color:#166534;">DNHQ Hosted</span>
