@@ -319,7 +319,7 @@
      class="hidden fixed inset-0 z-50 flex items-center justify-center p-4"
      onclick="if(event.target===this)closeModal()">
   <div class="absolute inset-0 bg-black/40"></div>
-  <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+  <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col">
 
     <!-- Modal header -->
     <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
@@ -327,17 +327,36 @@
         <h2 id="modal-title" class="text-lg font-bold text-slate-800">DNS Records</h2>
         <p id="modal-subtitle" class="text-xs text-slate-400 mt-0.5"></p>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
         <a id="modal-link" href="#" target="_blank" rel="noopener"
-           class="text-xs text-sky-600 hover:underline flex items-center gap-0.5">
+           class="text-xs text-sky-600 hover:underline flex items-center gap-0.5 mr-2">
           Open site
           <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                   d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
           </svg>
         </a>
+        <!-- Elastic Email preset -->
+        <button onclick="applyElasticEmailPreset()"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700
+                       hover:bg-purple-100 border border-purple-200 rounded-lg transition">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+          Elastic Email setup
+        </button>
+        <!-- Add record -->
+        <button onclick="showAddForm()"
+                class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-sky-500 text-white
+                       hover:bg-sky-400 rounded-lg transition">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Add record
+        </button>
         <button onclick="closeModal()"
-                class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+                class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition ml-1">
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
@@ -347,6 +366,62 @@
 
     <!-- Hosting badge strip -->
     <div id="modal-hosting" class="hidden px-6 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-600 flex items-center gap-2"></div>
+
+    <!-- Add / Edit form -->
+    <div id="record-form" class="hidden px-6 py-4 border-b border-slate-200 bg-slate-50">
+      <p id="form-title" class="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Add Record</p>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div>
+          <label class="text-xs text-slate-500 mb-1 block">Type</label>
+          <select id="f-type" onchange="onTypeChange()"
+                  class="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none">
+            <option>A</option><option>AAAA</option><option>CNAME</option>
+            <option>MX</option><option>TXT</option><option>NS</option>
+            <option>SRV</option><option>CAA</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500 mb-1 block">Host / Name</label>
+          <input id="f-host" type="text" placeholder="@ or subdomain"
+                 class="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none font-mono"/>
+        </div>
+        <div class="col-span-2 sm:col-span-1">
+          <label class="text-xs text-slate-500 mb-1 block">TTL</label>
+          <select id="f-ttl"
+                  class="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none">
+            <option value="60">1 min</option>
+            <option value="300">5 min</option>
+            <option value="900" selected>15 min</option>
+            <option value="1800">30 min</option>
+            <option value="3600">1 hour</option>
+            <option value="21600">6 hours</option>
+            <option value="86400">1 day</option>
+          </select>
+        </div>
+        <div id="f-priority-wrap" class="hidden">
+          <label class="text-xs text-slate-500 mb-1 block">Priority</label>
+          <input id="f-priority" type="number" value="10" min="0"
+                 class="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none"/>
+        </div>
+      </div>
+      <div class="mt-3">
+        <label class="text-xs text-slate-500 mb-1 block">Value</label>
+        <input id="f-record" type="text" placeholder="IP address, hostname, or text value"
+               class="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-sky-400 focus:outline-none font-mono"/>
+      </div>
+      <input type="hidden" id="f-record-id" value=""/>
+      <div class="flex items-center gap-2 mt-3">
+        <button onclick="submitRecord()"
+                class="px-4 py-1.5 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-lg transition">
+          Save
+        </button>
+        <button onclick="hideForm()"
+                class="px-4 py-1.5 text-sm text-slate-500 hover:text-slate-700 transition">
+          Cancel
+        </button>
+        <span id="form-error" class="text-xs text-red-500 ml-2"></span>
+      </div>
+    </div>
 
     <!-- Records table -->
     <div class="overflow-y-auto flex-1 px-6 py-4">
@@ -361,10 +436,11 @@
         <table class="w-full text-sm">
           <thead>
             <tr class="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
-              <th class="py-2 text-left font-semibold w-20">Type</th>
-              <th class="py-2 text-left font-semibold">Host</th>
+              <th class="py-2 text-left font-semibold w-16">Type</th>
+              <th class="py-2 text-left font-semibold w-32">Host</th>
               <th class="py-2 text-left font-semibold">Value</th>
               <th class="py-2 text-left font-semibold w-16">TTL</th>
+              <th class="py-2 w-16"></th>
             </tr>
           </thead>
           <tbody id="records-body" class="divide-y divide-slate-50"></tbody>
@@ -373,6 +449,38 @@
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- ============================================================ ELASTIC EMAIL PRESET MODAL -->
+<div id="elastic-modal"
+     class="hidden fixed inset-0 z-60 flex items-center justify-center p-4"
+     onclick="if(event.target===this)closeElasticModal()">
+  <div class="absolute inset-0 bg-black/50"></div>
+  <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+      <div>
+        <h3 class="text-base font-bold text-slate-800">Elastic Email Setup</h3>
+        <p class="text-xs text-slate-400 mt-0.5">Records that will be added / updated for <span id="elastic-zone-name" class="font-semibold"></span></p>
+      </div>
+      <button onclick="closeElasticModal()" class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="overflow-y-auto flex-1 px-6 py-4">
+      <div id="elastic-preview" class="space-y-2"></div>
+      <div id="elastic-spf-note" class="hidden mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800"></div>
+    </div>
+    <div class="px-6 py-4 border-t border-slate-100 flex items-center gap-3">
+      <button onclick="confirmElasticPreset()"
+              class="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white text-sm font-medium rounded-lg transition">
+        Apply all records
+      </button>
+      <button onclick="closeElasticModal()" class="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+      <span id="elastic-status" class="text-xs text-slate-400 ml-auto"></span>
+    </div>
   </div>
 </div>
 
@@ -455,21 +563,21 @@
     });
   });
 
-  // ---- Records modal ----
-  function openRecords(zoneName, row) {
-    const modal     = document.getElementById('records-modal');
-    const title     = document.getElementById('modal-title');
-    const subtitle  = document.getElementById('modal-subtitle');
-    const link      = document.getElementById('modal-link');
-    const hosting   = document.getElementById('modal-hosting');
-    const loading   = document.getElementById('modal-loading');
-    const content   = document.getElementById('modal-content');
-    const tbody     = document.getElementById('records-body');
-    const noRecs    = document.getElementById('no-records');
+  // ---- Records modal state ----
+  let currentZone    = '';
+  let currentRecords = [];
 
-    title.textContent    = zoneName;
-    subtitle.textContent = 'Loading DNS records from ClouDNS…';
-    link.href            = `https://${zoneName}`;
+  function openRecords(zoneName, row) {
+    currentZone = zoneName;
+    hideForm();
+
+    const modal   = document.getElementById('records-modal');
+    const title   = document.getElementById('modal-title');
+    const hosting = document.getElementById('modal-hosting');
+
+    title.textContent = zoneName;
+    document.getElementById('modal-link').href = `https://${zoneName}`;
+    document.getElementById('modal-subtitle').textContent = 'Loading…';
 
     // Hosting badge
     const isHosted   = row.dataset.hosted === '1';
@@ -484,60 +592,374 @@
       hosting.classList.add('hidden');
     }
 
-    loading.classList.remove('hidden');
-    content.classList.add('hidden');
-    noRecs.classList.add('hidden');
-    tbody.innerHTML = '';
+    document.getElementById('modal-loading').classList.remove('hidden');
+    document.getElementById('modal-content').classList.add('hidden');
+    document.getElementById('no-records').classList.add('hidden');
+    document.getElementById('records-body').innerHTML = '';
     modal.classList.remove('hidden');
 
-    fetch(`/domains/records?zone=${encodeURIComponent(zoneName)}`)
+    loadRecords();
+  }
+
+  function loadRecords() {
+    document.getElementById('modal-loading').classList.remove('hidden');
+    document.getElementById('modal-content').classList.add('hidden');
+    document.getElementById('records-body').innerHTML = '';
+
+    fetch(`/domains/records?zone=${encodeURIComponent(currentZone)}`)
       .then(r => r.json())
       .then(data => {
-        loading.classList.add('hidden');
-        content.classList.remove('hidden');
-        const records = data.records || [];
-        subtitle.textContent = `${records.length} record${records.length !== 1 ? 's' : ''}`;
-        if (!records.length) {
-          noRecs.classList.remove('hidden');
-          return;
-        }
-        records.forEach(rec => {
-          const type  = (rec.type || '').toUpperCase();
-          const cls   = `rec-type-${type.toLowerCase()}`;
-          const host  = rec.host || '@';
-          const value = rec.record || '';
-          const ttl   = rec.ttl ? `${rec.ttl}s` : '';
-          const tr = document.createElement('tr');
-          tr.className = 'border-b border-slate-50';
-          tr.innerHTML = `
-            <td class="py-2 pr-4">
-              <span class="badge ${cls} font-mono">${type}</span>
-            </td>
-            <td class="py-2 pr-4 font-mono text-xs text-slate-600 max-w-[160px] truncate" title="${host}">
-              ${host || '@'}
-            </td>
-            <td class="py-2 pr-4 font-mono text-xs text-slate-700 max-w-[300px] break-all">
-              ${value}
-            </td>
-            <td class="py-2 text-xs text-slate-400 whitespace-nowrap">${ttl}</td>
-          `;
-          tbody.appendChild(tr);
-        });
+        currentRecords = data.records || [];
+        document.getElementById('modal-loading').classList.add('hidden');
+        document.getElementById('modal-content').classList.remove('hidden');
+        document.getElementById('modal-subtitle').textContent =
+          `${currentRecords.length} record${currentRecords.length !== 1 ? 's' : ''}`;
+
+        const tbody  = document.getElementById('records-body');
+        const noRecs = document.getElementById('no-records');
+        noRecs.classList.toggle('hidden', currentRecords.length > 0);
+
+        currentRecords.forEach(rec => renderRecordRow(rec, tbody));
       })
       .catch(() => {
-        loading.classList.add('hidden');
-        content.classList.remove('hidden');
-        noRecs.classList.remove('hidden');
-        subtitle.textContent = 'Failed to load records.';
+        document.getElementById('modal-loading').classList.add('hidden');
+        document.getElementById('modal-content').classList.remove('hidden');
+        document.getElementById('modal-subtitle').textContent = 'Failed to load records.';
       });
+  }
+
+  function renderRecordRow(rec, tbody) {
+    const type  = (rec.type || '').toUpperCase();
+    const cls   = `rec-type-${type.toLowerCase()}`;
+    const host  = rec.host || '@';
+    const value = rec.record || '';
+    const ttl   = rec.ttl ? `${rec.ttl}s` : '';
+    const id    = rec.id;
+
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-slate-50 group';
+    tr.dataset.id = id;
+    tr.innerHTML = `
+      <td class="py-2 pr-3"><span class="badge ${cls} font-mono">${type}</span></td>
+      <td class="py-2 pr-3 font-mono text-xs text-slate-600 max-w-[130px] truncate" title="${esc(host)}">${esc(host)}</td>
+      <td class="py-2 pr-3 font-mono text-xs text-slate-700 break-all max-w-[280px]" title="${esc(value)}">${esc(value)}</td>
+      <td class="py-2 pr-2 text-xs text-slate-400 whitespace-nowrap">${ttl}</td>
+      <td class="py-2 text-right">
+        <div class="opacity-0 group-hover:opacity-100 flex items-center gap-1 justify-end transition">
+          <button onclick="editRecord(${JSON.stringify(rec).replace(/"/g,'&quot;')})"
+                  class="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition" title="Edit">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+            </svg>
+          </button>
+          <button onclick="deleteRecord('${id}', '${esc(type)}', '${esc(host)}')"
+                  class="p-1 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition" title="Delete">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+          </button>
+        </div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ---- Add / Edit form ----
+  function showAddForm() {
+    document.getElementById('f-record-id').value = '';
+    document.getElementById('f-type').value      = 'A';
+    document.getElementById('f-host').value      = '';
+    document.getElementById('f-record').value    = '';
+    document.getElementById('f-ttl').value       = '900';
+    document.getElementById('f-priority').value  = '10';
+    document.getElementById('form-title').textContent = 'Add Record';
+    document.getElementById('form-error').textContent = '';
+    onTypeChange();
+    document.getElementById('record-form').classList.remove('hidden');
+    document.getElementById('f-host').focus();
+  }
+
+  function editRecord(rec) {
+    document.getElementById('f-record-id').value = rec.id;
+    document.getElementById('f-type').value      = rec.type || 'A';
+    document.getElementById('f-host').value      = rec.host || '';
+    document.getElementById('f-record').value    = rec.record || '';
+    document.getElementById('f-ttl').value       = rec.ttl || '900';
+    document.getElementById('f-priority').value  = rec.priority || '10';
+    document.getElementById('form-title').textContent = 'Edit Record';
+    document.getElementById('form-error').textContent = '';
+    onTypeChange();
+    document.getElementById('record-form').classList.remove('hidden');
+    document.getElementById('f-record').focus();
+  }
+
+  function hideForm() {
+    document.getElementById('record-form').classList.add('hidden');
+  }
+
+  function onTypeChange() {
+    const type = document.getElementById('f-type').value;
+    document.getElementById('f-priority-wrap').classList.toggle('hidden', type !== 'MX');
+  }
+
+  function submitRecord() {
+    const id      = document.getElementById('f-record-id').value;
+    const type    = document.getElementById('f-type').value;
+    const host    = document.getElementById('f-host').value.trim();
+    const record  = document.getElementById('f-record').value.trim();
+    const ttl     = document.getElementById('f-ttl').value;
+    const priority= document.getElementById('f-priority').value;
+    const errEl   = document.getElementById('form-error');
+
+    if (!record) { errEl.textContent = 'Value is required.'; return; }
+    errEl.textContent = '';
+
+    const endpoint = id ? '/domains/edit-record' : '/domains/add-record';
+    const payload  = { zone: currentZone, type, host, record, ttl: parseInt(ttl) };
+    if (id) payload.id = id;
+    if (type === 'MX') payload.priority = parseInt(priority);
+
+    fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        hideForm();
+        loadRecords();
+        showToast(id ? 'Record updated' : 'Record added', 'green');
+      } else {
+        errEl.textContent = data.error || 'Failed to save.';
+      }
+    })
+    .catch(() => { errEl.textContent = 'Network error.'; });
+  }
+
+  function deleteRecord(id, type, host) {
+    if (!confirm(`Delete ${type} record for "${host}"?`)) return;
+    fetch('/domains/delete-record', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: currentZone, id }),
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        loadRecords();
+        showToast('Record deleted', 'red');
+      } else {
+        showToast(data.error || 'Failed to delete', 'red');
+      }
+    });
   }
 
   function closeModal() {
     document.getElementById('records-modal').classList.add('hidden');
+    hideForm();
   }
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeElasticModal(); } });
+
+  // ---- Elastic Email preset ----
+  // Records required per Elastic Email documentation:
+  //   SPF:     TXT @ — merge include:_spf.elasticemail.com into any existing SPF
+  //   DKIM:    TXT api._domainkey — shared public key
+  //   Tracking CNAME: tracking → api.elasticemail.com
+  const ELASTIC_SPF_INCLUDE = 'include:_spf.elasticemail.com';
+  const ELASTIC_RECORDS = [
+    {
+      type: 'TXT', host: '', ttl: 3600, spf: true,
+      record: 'v=spf1 a mx include:_spf.elasticemail.com ~all',
+      label: 'SPF — authorise Elastic Email to send',
+    },
+    {
+      type: 'TXT', host: 'api._domainkey', ttl: 3600,
+      record: 'k=rsa;t=s;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCbmGbQMzYeMvxwtNQoXN0waGYaciuKx8mtMh5czguT4EZlJXuCt6V+l56mmt3t68FEX5JJ0q4ijG71BGoFRkl87uJi7LrQt1ZZmZCvrEII0YO4mp8sDLXC8g1aUAoi8TJgxq2MJqCaMyj5kAm3Fdy2tzftPCV/lbdiJqmBnWKjtwIDAQAB',
+      label: 'DKIM — email signing key (api._domainkey)',
+    },
+    {
+      type: 'CNAME', host: 'tracking', ttl: 3600,
+      record: 'api.elasticemail.com',
+      label: 'CNAME — open/click tracking domain',
+    },
+  ];
+
+  let elasticPendingActions = [];
+
+  function applyElasticEmailPreset() {
+    document.getElementById('elastic-zone-name').textContent = currentZone;
+    document.getElementById('elastic-status').textContent    = '';
+    document.getElementById('elastic-spf-note').classList.add('hidden');
+
+    const preview = document.getElementById('elastic-preview');
+    preview.innerHTML = '<p class="text-xs text-slate-400">Checking existing records…</p>';
+    document.getElementById('elastic-modal').classList.remove('hidden');
+
+    // Load current records then build plan
+    fetch(`/domains/records?zone=${encodeURIComponent(currentZone)}`)
+      .then(r => r.json())
+      .then(data => {
+        const existing = data.records || [];
+        elasticPendingActions = [];
+        preview.innerHTML = '';
+
+        // Find existing records to determine add vs merge vs skip
+        const existingSpf = existing.find(r =>
+          r.type === 'TXT' && (r.host === '' || r.host === '@') &&
+          (r.record || '').includes('v=spf1')
+        );
+        const existingTracking = existing.find(r =>
+          r.type === 'CNAME' && r.host === 'tracking'
+        );
+
+        // Find existing DKIM record
+        const existingDkim = existing.find(r =>
+          r.type === 'TXT' && (r.host || '').startsWith('api._domainkey')
+        );
+
+        ELASTIC_RECORDS.forEach(rec => {
+          let action, note, newValue = rec.record;
+
+          if (rec.spf) {
+            if (existingSpf) {
+              const oldVal = existingSpf.record;
+              if (oldVal.includes('_spf.elasticemail.com')) {
+                action   = 'skip';
+                note     = 'Already includes Elastic Email — no change needed';
+                newValue = oldVal;
+              } else {
+                // Merge: insert the include before the qualifier (~all / -all / ?all / +all)
+                newValue = oldVal.replace(/([~\-?+]all\s*)$/i,
+                  `${ELASTIC_SPF_INCLUDE} $1`).trim();
+                action = 'edit';
+                note   = 'Merge include:_spf.elasticemail.com into existing SPF';
+                elasticPendingActions.push({ action: 'edit', rec, id: existingSpf.id, overrideRecord: newValue });
+
+                const noteEl = document.getElementById('elastic-spf-note');
+                noteEl.classList.remove('hidden');
+                noteEl.innerHTML = `<strong>SPF merge:</strong><br>
+                  Before: <code class="font-mono break-all">${esc(oldVal)}</code><br>
+                  After:&nbsp; <code class="font-mono break-all text-green-700">${esc(newValue)}</code>`;
+              }
+            } else {
+              action = 'add';
+              note   = 'No existing SPF — new record will be created';
+              elasticPendingActions.push({ action: 'add', rec });
+            }
+          } else if (rec.type === 'TXT' && rec.host === 'api._domainkey') {
+            if (existingDkim) {
+              if ((existingDkim.record || '').includes('MIGfMA0GCSqGSIb3')) {
+                action = 'skip'; note = 'DKIM already set';
+              } else {
+                action = 'edit'; note = 'Update existing DKIM record';
+                elasticPendingActions.push({ action: 'edit', rec, id: existingDkim.id });
+              }
+            } else {
+              action = 'add'; note = 'New DKIM record';
+              elasticPendingActions.push({ action: 'add', rec });
+            }
+          } else if (rec.type === 'CNAME' && rec.host === 'tracking') {
+            if (existingTracking) {
+              if ((existingTracking.record || '').includes('elasticemail.com')) {
+                action = 'skip'; note = 'Tracking CNAME already set';
+              } else {
+                action = 'edit'; note = `Update tracking CNAME (was: ${existingTracking.record})`;
+                elasticPendingActions.push({ action: 'edit', rec, id: existingTracking.id });
+              }
+            } else {
+              action = 'add'; note = 'New tracking CNAME';
+              elasticPendingActions.push({ action: 'add', rec });
+            }
+          }
+
+          const badge = action === 'skip'
+            ? '<span class="badge" style="background:#dcfce7;color:#166534;">Already set</span>'
+            : action === 'edit'
+            ? '<span class="badge" style="background:#fef3c7;color:#92400e;">Update</span>'
+            : '<span class="badge" style="background:#dbeafe;color:#1e40af;">Add</span>';
+
+          const row = document.createElement('div');
+          row.className = 'flex items-start gap-3 p-3 rounded-lg border border-slate-100 bg-slate-50';
+          row.innerHTML = `
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                ${badge}
+                <span class="text-xs font-semibold text-slate-700">${rec.label}</span>
+              </div>
+              <div class="font-mono text-xs text-slate-500 mt-1 break-all">${esc(newValue)}</div>
+              <div class="text-xs text-slate-400 mt-0.5">${note}</div>
+            </div>
+          `;
+          preview.appendChild(row);
+        });
+      });
+  }
+
+  async function confirmElasticPreset() {
+    const statusEl = document.getElementById('elastic-status');
+    const btn = document.querySelector('#elastic-modal button[onclick="confirmElasticPreset()"]');
+    btn.disabled = true;
+    statusEl.textContent = 'Applying…';
+
+    let done = 0;
+    for (const action of elasticPendingActions) {
+      const rec      = action.rec;
+      const endpoint = action.action === 'add' ? '/domains/add-record' : '/domains/edit-record';
+      const payload  = {
+        zone:   currentZone,
+        type:   rec.type,
+        host:   rec.host,
+        record: action.overrideRecord || rec.record,
+        ttl:    rec.ttl,
+      };
+      if (action.id) payload.id = action.id;
+      if (rec.priority) payload.priority = rec.priority;
+
+      try {
+        const r    = await fetch(endpoint, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        const data = await r.json();
+        if (!data.ok) { statusEl.textContent = `Error: ${data.error}`; btn.disabled = false; return; }
+        done++;
+        statusEl.textContent = `${done}/${elasticPendingActions.length} applied…`;
+      } catch(e) {
+        statusEl.textContent = 'Network error'; btn.disabled = false; return;
+      }
+    }
+
+    statusEl.textContent = `✓ Done — ${done} record${done !== 1 ? 's' : ''} applied`;
+    btn.disabled = false;
+    closeElasticModal();
+    loadRecords();
+    showToast('Elastic Email records applied', 'green');
+  }
+
+  function closeElasticModal() {
+    document.getElementById('elastic-modal').classList.add('hidden');
+  }
 
   // ---- Sync zones ----
+  // ---- Toast helper ----
+  function showToast(msg, colour = 'green') {
+    const toast    = document.getElementById('sync-toast');
+    const toastTxt = document.getElementById('toast-text');
+    const icon     = document.getElementById('toast-icon');
+    toastTxt.textContent = msg;
+    icon.className = `w-4 h-4 flex-shrink-0 ${colour === 'green' ? 'text-green-400' : 'text-red-400'}`;
+    icon.innerHTML = colour === 'green'
+      ? '<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" fill="none"/>'
+      : '<path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" fill="none"/>';
+    icon.setAttribute('viewBox', '0 0 24 24');
+    toast.classList.remove('hidden');
+    setTimeout(() => toast.classList.add('hidden'), 3000);
+  }
+
   function refreshZones() {
     const btn  = document.getElementById('refresh-btn');
     const icon = document.getElementById('refresh-icon');

@@ -1628,6 +1628,81 @@ def domains_records():
     return jsonify({'records': records})
 
 
+@app.route('/domains/add-record', methods=['POST'])
+def domains_add_record():
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    if not cloudns_cfg.get('auth_id'):
+        return jsonify({'ok': False, 'error': 'ClouDNS not configured'})
+    auth = {'auth-id': cloudns_cfg['auth_id'], 'auth-password': cloudns_cfg['auth_password']}
+    data = request.get_json()
+    params = {
+        **auth,
+        'domain-name': data.get('zone'),
+        'type':        data.get('type'),
+        'host':        data.get('host', ''),
+        'record':      data.get('record', ''),
+        'ttl':         data.get('ttl', 3600),
+    }
+    if data.get('priority'):
+        params['priority'] = data['priority']
+    try:
+        r = requests.post('https://api.cloudns.net/dns/add-record.json', data=params, timeout=15)
+        resp = r.json()
+        if resp.get('status') == 'Success':
+            return jsonify({'ok': True})
+        return jsonify({'ok': False, 'error': resp.get('statusDescription', 'Unknown error')})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/domains/edit-record', methods=['POST'])
+def domains_edit_record():
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    if not cloudns_cfg.get('auth_id'):
+        return jsonify({'ok': False, 'error': 'ClouDNS not configured'})
+    auth = {'auth-id': cloudns_cfg['auth_id'], 'auth-password': cloudns_cfg['auth_password']}
+    data = request.get_json()
+    params = {
+        **auth,
+        'domain-name': data.get('zone'),
+        'id':          data.get('id'),
+        'host':        data.get('host', ''),
+        'record':      data.get('record', ''),
+        'ttl':         data.get('ttl', 3600),
+    }
+    if data.get('priority'):
+        params['priority'] = data['priority']
+    try:
+        r = requests.post('https://api.cloudns.net/dns/mod-record.json', data=params, timeout=15)
+        resp = r.json()
+        if resp.get('status') == 'Success':
+            return jsonify({'ok': True})
+        return jsonify({'ok': False, 'error': resp.get('statusDescription', 'Unknown error')})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/domains/delete-record', methods=['POST'])
+def domains_delete_record():
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    if not cloudns_cfg.get('auth_id'):
+        return jsonify({'ok': False, 'error': 'ClouDNS not configured'})
+    auth = {'auth-id': cloudns_cfg['auth_id'], 'auth-password': cloudns_cfg['auth_password']}
+    data = request.get_json()
+    params = {**auth, 'domain-name': data.get('zone'), 'id': data.get('id')}
+    try:
+        r = requests.post('https://api.cloudns.net/dns/delete-record.json', data=params, timeout=15)
+        resp = r.json()
+        if resp.get('status') == 'Success':
+            return jsonify({'ok': True})
+        return jsonify({'ok': False, 'error': resp.get('statusDescription', 'Unknown error')})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
 # ---------------------------------------------------------------------------
 
 def require_email_auth(f):
