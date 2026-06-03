@@ -18,8 +18,15 @@ from flask import Flask, render_template, request, redirect, jsonify, session, u
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+
+# Session cookie hardening — SameSite=Lax blocks cross-origin POST CSRF;
+# Secure ensures cookie is only sent over HTTPS.
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE']   = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+
 if not os.environ.get('SECRET_KEY'):
-    print('WARNING: SECRET_KEY not set — sessions will break with multiple workers. Set it as a Fly secret.')
+    print('WARNING: SECRET_KEY not set — sessions invalidate on every restart. Set it as a Fly secret.')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.yaml')
@@ -980,11 +987,16 @@ def do_refresh():
 # ---------------------------------------------------------------------------
 
 def require_auth(f):
-    """Redirect to /login if the user is not authenticated."""
+    """Redirect to /login if the user is not authenticated.
+    Passes the relative path (not the full URL) as `next` to avoid open-redirect."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get('authed'):
-            return redirect(url_for('login', next=request.url))
+            # Use only the path+query, never the full URL, to prevent open redirect
+            next_path = request.path
+            if request.query_string:
+                next_path += '?' + request.query_string.decode('utf-8', errors='replace')
+            return redirect(url_for('login', next=next_path))
         return f(*args, **kwargs)
     return decorated
 
@@ -1579,9 +1591,10 @@ def domains():
 
     hosted_domains = {}   # domain_name -> {provider, assignee}
     for row in site_rows:
-        hosted_domains[row[0]] = {'provider': row[1], 'assignee': row[2]}
+        # row: domain(0), hosting_provider(1), alt_domains(2), teamwork_assignee(3)
+        hosted_domains[row[0]] = {'provider': row[1], 'assignee': row[3]}
         for alt in json.loads(row[2] or '[]'):
-            hosted_domains[alt] = {'provider': row[1], 'assignee': row[2]}
+            hosted_domains[alt] = {'provider': row[1], 'assignee': row[3]}
 
     # Get ClouDNS zone stats
     zone_stats = {'count': len(cached), 'limit': 0}
@@ -1748,10 +1761,31 @@ def domains_delete_record():
 # Site-wide authentication routes
 # ---------------------------------------------------------------------------
 
+# Simple in-memory brute-force protection for /login
+# {ip: [timestamp, ...]}  — kept lightweight; resets on server restart
+_login_attempts: dict = {}
+_LOGIN_MAX_ATTEMPTS = 10
+_LOGIN_WINDOW_SECS  = 900   # 15 minutes
+
+def _is_rate_limited(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW_SECS]
+    _login_attempts[ip] = attempts
+    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+def _record_failure(ip: str):
+    _login_attempts.setdefault(ip, []).append(time.time())
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
     if request.method == 'POST':
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+        if _is_rate_limited(client_ip):
+            error = 'Too many failed attempts. Try again in 15 minutes.'
+            return render_template('login.html', error=error)
+
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         cfg      = load_config()
@@ -1761,10 +1795,17 @@ def login():
                 and secrets.compare_digest(username.encode(), ok_user.encode())
                 and secrets.compare_digest(password.encode(), ok_pass.encode())):
             session['authed'] = True
-            next_url = request.args.get('next', '')
-            if not next_url or not next_url.startswith('/') or next_url.startswith('//'):
+            _login_attempts.pop(client_ip, None)   # clear failures on success
+            # Accept only relative paths — reject anything that could be an
+            # external redirect (starts with // or contains a scheme)
+            next_url = request.args.get('next', '').strip()
+            if (not next_url
+                    or not next_url.startswith('/')
+                    or next_url.startswith('//')
+                    or ':' in next_url.split('/')[0]):
                 next_url = url_for('index')
             return redirect(next_url)
+        _record_failure(client_ip)
         error = 'Incorrect username or password.'
     return render_template('login.html', error=error)
 
@@ -2011,6 +2052,9 @@ def email_log():
 @require_email_auth
 @require_auth
 def email_detail(msg_id):
+    # Sanitise msg_id — allow only safe chars to prevent API path traversal
+    if not re.match(r'^[\w\-\.@+]+$', msg_id):
+        return jsonify({'error': 'Invalid message ID.'}), 400
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
     if not api_key:
@@ -2055,4 +2099,4 @@ def email_detail(msg_id):
 init_db()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5050, use_reloader=False)
+    app.run(debug=False, port=5050, use_reloader=False)

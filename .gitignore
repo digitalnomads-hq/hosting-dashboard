@@ -5,3 +5,5 @@ sites.db
 *.csv
 .env
 config.yaml
+*.db-shm
+*.db-wal
