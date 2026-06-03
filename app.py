@@ -148,6 +148,20 @@ def init_db():
             except Exception:
                 pass
 
+        # DNS zones cache table (ClouDNS zone list)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS dns_zones (
+                name         TEXT PRIMARY KEY,
+                zone_id      TEXT,
+                record_type  TEXT,
+                zone_kind    TEXT,
+                status       TEXT,
+                serial       TEXT,
+                is_updated   INTEGER DEFAULT 1,
+                last_synced  INTEGER DEFAULT 0
+            )
+        ''')
+
         # Remove any sites whose domain has no dot — these are bogus entries
         # created by the Teamwork sync matching bare task names like
         # "authority-building", "communication", "sales", etc.
@@ -553,6 +567,96 @@ def fetch_cloudns_a_record(domain, cloudns_cfg):
     except Exception as e:
         print(f'[ClouDNS] Error fetching A record for {domain}: {e}')
     return None
+
+
+def sync_cloudns_zones(cloudns_cfg):
+    """Fetch all zones from ClouDNS and upsert into dns_zones cache table.
+    Returns list of zone dicts."""
+    auth = {
+        'auth-id':       cloudns_cfg['auth_id'],
+        'auth-password': cloudns_cfg['auth_password'],
+    }
+    # Valid rows-per-page values for ClouDNS: 10, 20, 30, 50, 100
+    rows_per_page = 100
+    page = 1
+    all_zones = []
+
+    while True:
+        try:
+            r = requests.get(
+                'https://api.cloudns.net/dns/list-zones.json',
+                params={**auth, 'page': page, 'rows-per-page': rows_per_page},
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, dict):
+                print(f'[ClouDNS] list-zones error: {data}')
+                break
+            all_zones.extend(data)
+            if len(data) < rows_per_page:
+                break
+            page += 1
+        except Exception as e:
+            print(f'[ClouDNS] Error fetching zones page {page}: {e}')
+            break
+
+    if not all_zones:
+        return []
+
+    now = int(time.time())
+    with sqlite3.connect(DB_FILE) as conn:
+        # Replace all cached zones atomically
+        conn.execute('DELETE FROM dns_zones')
+        for z in all_zones:
+            conn.execute('''
+                INSERT OR REPLACE INTO dns_zones
+                (name, zone_id, record_type, zone_kind, status, serial, is_updated, last_synced)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                z.get('name', '').rstrip('.'),
+                str(z.get('id', '')),
+                z.get('type', ''),       # master / slave
+                z.get('zone', ''),       # domain / ipv4
+                str(z.get('status', '')),
+                str(z.get('serial', '')),
+                int(z.get('isUpdated', 1)),
+                now,
+            ))
+        conn.commit()
+
+    print(f'[ClouDNS] Synced {len(all_zones)} zones.')
+    return all_zones
+
+
+def fetch_cloudns_zone_records(domain, cloudns_cfg):
+    """Fetch all DNS records for a zone. Returns list of record dicts."""
+    auth = {
+        'auth-id':       cloudns_cfg['auth_id'],
+        'auth-password': cloudns_cfg['auth_password'],
+    }
+    try:
+        r = requests.get(
+            'https://api.cloudns.net/dns/records.json',
+            params={**auth, 'domain-name': domain},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        if isinstance(data, dict) and 'status' in data:
+            return []   # error response
+        # Returns dict keyed by record id
+        records = []
+        for rec in data.values():
+            if isinstance(rec, dict):
+                records.append(rec)
+        # Sort: A/AAAA first, then MX, then the rest alphabetically
+        priority = {'A': 0, 'AAAA': 1, 'CNAME': 2, 'MX': 3, 'TXT': 4, 'NS': 5}
+        records.sort(key=lambda r: (priority.get(r.get('type', ''), 9), r.get('host', '')))
+        return records
+    except Exception as e:
+        print(f'[ClouDNS] Error fetching records for {domain}: {e}')
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -1402,6 +1506,128 @@ def export_csv():
 
 # ---------------------------------------------------------------------------
 # Email log auth
+# ---------------------------------------------------------------------------
+# Domains dashboard (ClouDNS zones)
+# ---------------------------------------------------------------------------
+
+@app.route('/domains')
+def domains():
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    error = None
+
+    # Load from cache; auto-sync if cache is empty or >1hr old
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.row_factory = sqlite3.Row
+        cached = conn.execute('SELECT * FROM dns_zones ORDER BY zone_kind, name').fetchall()
+        last_synced = conn.execute('SELECT MAX(last_synced) as ls FROM dns_zones').fetchone()['ls'] or 0
+
+    cache_age = int(time.time()) - last_synced
+    if not cached or cache_age > 3600:
+        if cloudns_cfg.get('auth_id') and cloudns_cfg.get('auth_password'):
+            try:
+                sync_cloudns_zones(cloudns_cfg)
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cached = conn.execute('SELECT * FROM dns_zones ORDER BY zone_kind, name').fetchall()
+            except Exception as e:
+                error = str(e)
+        else:
+            error = 'ClouDNS credentials not configured.'
+
+    # Build set of all known domains (primary + alt) from hosting dashboard
+    with sqlite3.connect(DB_FILE) as conn:
+        site_rows = conn.execute(
+            'SELECT domain, hosting_provider, alt_domains, teamwork_assignee FROM sites WHERE is_stale = 0'
+        ).fetchall()
+
+    hosted_domains = {}   # domain_name -> {provider, assignee}
+    for row in site_rows:
+        hosted_domains[row[0]] = {'provider': row[1], 'assignee': row[2]}
+        for alt in json.loads(row[2] or '[]'):
+            hosted_domains[alt] = {'provider': row[1], 'assignee': row[2]}
+
+    # Get ClouDNS zone stats
+    zone_stats = {'count': len(cached), 'limit': 0}
+    if cloudns_cfg.get('auth_id') and cloudns_cfg.get('auth_password'):
+        try:
+            auth = {'auth-id': cloudns_cfg['auth_id'], 'auth-password': cloudns_cfg['auth_password']}
+            r = requests.get('https://api.cloudns.net/dns/get-zones-stats.json', params=auth, timeout=10)
+            zone_stats = r.json()
+        except Exception:
+            pass
+
+    # Enrich zones with hosting cross-reference and serial date
+    zones = []
+    for z in cached:
+        d = dict(z)
+        # Parse serial → approximate last-modified date (YYYYMMDDXX format)
+        serial = d.get('serial', '')
+        d['serial_date'] = ''
+        if len(serial) >= 8 and serial[:8].isdigit():
+            try:
+                d['serial_date'] = datetime.strptime(serial[:8], '%Y%m%d').strftime('%-d %b %Y')
+            except Exception:
+                pass
+
+        # Cross-reference with hosting dashboard
+        hosting = hosted_domains.get(d['name'])
+        d['hosted_provider'] = hosting['provider'] if hosting else ''
+        d['hosted_assignee'] = hosting['assignee'] if hosting else ''
+        d['is_hosted'] = bool(hosting)
+
+        zones.append(d)
+
+    # Stats
+    domain_zones  = [z for z in zones if z['zone_kind'] == 'domain']
+    reverse_zones = [z for z in zones if z['zone_kind'] != 'domain']
+    unhosted      = [z for z in domain_zones if not z['is_hosted']]
+    hosted        = [z for z in domain_zones if z['is_hosted']]
+
+    last_synced_str = (
+        datetime.fromtimestamp(last_synced).strftime('%d %b %Y, %H:%M')
+        if last_synced else 'Never'
+    )
+
+    return render_template(
+        'domains.html',
+        zones=zones,
+        domain_zones=len(domain_zones),
+        reverse_zones=len(reverse_zones),
+        hosted_count=len(hosted),
+        unhosted_count=len(unhosted),
+        zone_stats=zone_stats,
+        last_synced=last_synced_str,
+        error=error,
+    )
+
+
+@app.route('/domains/refresh', methods=['POST'])
+def domains_refresh():
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    if not cloudns_cfg.get('auth_id'):
+        return jsonify({'ok': False, 'error': 'ClouDNS not configured'})
+    try:
+        zones = sync_cloudns_zones(cloudns_cfg)
+        return jsonify({'ok': True, 'count': len(zones)})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+
+
+@app.route('/domains/records')
+def domains_records():
+    zone_name = request.args.get('zone', '').strip()
+    if not zone_name:
+        return jsonify({'error': 'No zone specified'})
+    config = load_config()
+    cloudns_cfg = config.get('cloudns', {})
+    if not cloudns_cfg.get('auth_id'):
+        return jsonify({'error': 'ClouDNS not configured'})
+    records = fetch_cloudns_zone_records(zone_name, cloudns_cfg)
+    return jsonify({'records': records})
+
+
 # ---------------------------------------------------------------------------
 
 def require_email_auth(f):

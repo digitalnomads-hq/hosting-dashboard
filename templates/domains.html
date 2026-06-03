@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DNHQ Domains Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { navy: { 900: '#0f172a', 800: '#1e293b', 700: '#334155' } } } }
+    }
+  </script>
+  <style>
+    .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold; }
+    .host-cloudways { background:#e0f2fe; color:#0369a1; }
+    .host-kinsta    { background:#f3e8ff; color:#7e22ce; }
+    .host-external  { background:#f1f5f9; color:#475569; }
+    th[data-sort] { cursor: pointer; user-select: none; }
+    th[data-sort]:hover { background: #f1f5f9; }
+    th[data-sort].sorted-asc  span.sort-icon::after { content: ' ↑'; }
+    th[data-sort].sorted-desc span.sort-icon::after { content: ' ↓'; }
+    tbody tr:hover { background: #f8fafc; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+    .rec-type-a     { background:#dbeafe; color:#1e40af; }
+    .rec-type-aaaa  { background:#ede9fe; color:#5b21b6; }
+    .rec-type-cname { background:#dcfce7; color:#166534; }
+    .rec-type-mx    { background:#fef3c7; color:#92400e; }
+    .rec-type-txt   { background:#f1f5f9; color:#475569; }
+    .rec-type-ns    { background:#fce7f3; color:#9d174d; }
+    .rec-type-other { background:#f1f5f9; color:#64748b; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans text-slate-800">
+
+<!-- ============================================================ HEADER -->
+<header class="bg-navy-900 text-white shadow-lg sticky top-0 z-20">
+  <div class="w-full px-6 py-4 flex items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <svg class="w-7 h-7 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
+      </svg>
+      <div>
+        <h1 class="text-xl font-bold leading-tight tracking-tight">DNHQ Domains</h1>
+        <p class="text-xs text-slate-400 mt-0.5">
+          {{ zone_stats.count or '—' }} zones
+          {% if zone_stats.limit %} / {{ zone_stats.limit }} limit{% endif %}
+          · Synced {{ last_synced }}
+        </p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <nav class="flex items-center bg-slate-800 rounded-xl overflow-hidden">
+        <a href="/" class="flex items-center gap-1.5 px-4 py-2 text-slate-300 text-sm font-medium hover:bg-slate-700 transition border-r border-slate-700">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/>
+          </svg>
+          Dashboard
+        </a>
+        <a href="/domains" class="flex items-center gap-1.5 px-4 py-2 text-white text-sm font-medium bg-slate-700 border-r border-slate-700">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"/>
+          </svg>
+          Domains
+        </a>
+        <a href="/emails" class="flex items-center gap-1.5 px-4 py-2 text-slate-300 text-sm font-medium hover:bg-slate-700 transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+          Email Log
+        </a>
+      </nav>
+
+      <button id="refresh-btn" onclick="refreshZones()"
+              class="flex items-center gap-1.5 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white text-sm font-medium rounded-xl transition">
+        <svg id="refresh-icon" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h5M20 20v-5h-5M4 9a8 8 0 0114.93-2.69M19.07 15.69A8 8 0 014 15"/>
+        </svg>
+        Sync Zones
+      </button>
+    </div>
+  </div>
+</header>
+
+{% if error %}
+<div class="w-full px-6 pt-4">
+  <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
+    ⚠ {{ error }}
+  </div>
+</div>
+{% endif %}
+
+<!-- ============================================================ STATS -->
+<div class="w-full px-6 py-5">
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+
+    <div onclick="setFilter('all')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-sky-400 shadow-md
+                cursor-pointer hover:shadow-md transition-all col-span-2 sm:col-span-1"
+         data-filter="all">
+      <div class="text-3xl font-bold text-slate-800">{{ zones | length }}</div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">All Zones</div>
+    </div>
+
+    <div onclick="setFilter('domain')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all"
+         data-filter="domain">
+      <div class="text-3xl font-bold text-slate-800">{{ domain_zones }}</div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">Domain Zones</div>
+    </div>
+
+    <div onclick="setFilter('reverse')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all"
+         data-filter="reverse">
+      <div class="text-3xl font-bold text-slate-800">{{ reverse_zones }}</div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">Reverse Zones</div>
+    </div>
+
+    <div onclick="setFilter('hosted')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all"
+         data-filter="hosted">
+      <div class="flex items-center justify-between">
+        <div class="text-3xl font-bold text-slate-800">{{ hosted_count }}</div>
+        <span class="badge" style="background:#dcfce7;color:#166534;">Hosted</span>
+      </div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">On DNHQ</div>
+    </div>
+
+    <div onclick="setFilter('unhosted')"
+         class="stat-card bg-white rounded-xl p-4 shadow-sm border-2 border-transparent
+                cursor-pointer hover:shadow-md transition-all"
+         data-filter="unhosted">
+      <div class="flex items-center justify-between">
+        <div class="text-3xl font-bold text-slate-800">{{ unhosted_count }}</div>
+        <span class="badge" style="background:#fef3c7;color:#92400e;">External</span>
+      </div>
+      <div class="text-xs text-slate-500 mt-1 font-medium uppercase tracking-wide">DNS Only</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================ TABLE -->
+<div class="w-full px-6 pb-16">
+  <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+
+    <!-- Toolbar -->
+    <div class="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center gap-3">
+      <div class="relative flex-1 min-w-[180px] max-w-sm">
+        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+             fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 16.65z"/>
+        </svg>
+        <input id="search" type="text" placeholder="Search domains…"
+               oninput="filterTable()"
+               class="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg
+                      focus:outline-none focus:ring-2 focus:ring-sky-400 bg-slate-50" />
+      </div>
+
+      <select id="type-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All Types</option>
+        <option value="domain">Domain Zones</option>
+        <option value="reverse">Reverse Zones</option>
+      </select>
+
+      <select id="hosted-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All</option>
+        <option value="hosted">On DNHQ hosting</option>
+        <option value="unhosted">DNS only</option>
+      </select>
+
+      <select id="status-filter" onchange="filterTable()"
+              class="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50
+                     focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <option value="">All Status</option>
+        <option value="1">Active</option>
+        <option value="0">Inactive</option>
+      </select>
+
+      <span id="visible-count" class="text-xs text-slate-400 ml-auto whitespace-nowrap">
+        Showing {{ zones | length }} zones
+      </span>
+
+      <button onclick="exportDomainsCSV()"
+              class="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700
+                     border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 hover:bg-slate-100 transition whitespace-nowrap">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+        </svg>
+        Export visible
+      </button>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="zones-table">
+        <thead>
+          <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wide">
+            <th data-sort="name"   class="px-4 py-3 text-left font-semibold">Domain <span class="sort-icon"></span></th>
+            <th data-sort="kind"   class="px-4 py-3 text-left font-semibold">Type <span class="sort-icon"></span></th>
+            <th                    class="px-4 py-3 text-left font-semibold">Status</th>
+            <th                    class="px-4 py-3 text-left font-semibold">Hosting</th>
+            <th data-sort="serial" class="px-4 py-3 text-left font-semibold">Last Modified <span class="sort-icon"></span></th>
+            <th                    class="px-4 py-3 text-left font-semibold w-10"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100" id="zones-body">
+
+        {% for zone in zones %}
+          <tr class="zone-row transition-colors cursor-pointer"
+              data-name="{{ zone.name | lower }}"
+              data-kind="{{ zone.zone_kind }}"
+              data-hosted="{{ '1' if zone.is_hosted else '0' }}"
+              data-status="{{ zone.status }}"
+              data-serial="{{ zone.serial }}"
+              onclick="openRecords('{{ zone.name }}', this)">
+
+            <!-- Domain name -->
+            <td class="px-4 py-3">
+              <div class="font-semibold text-slate-800">{{ zone.name }}</div>
+              {% if zone.zone_kind == 'domain' %}
+              <a href="https://{{ zone.name }}" target="_blank" rel="noopener"
+                 onclick="event.stopPropagation()"
+                 class="text-xs text-sky-600 hover:underline flex items-center gap-0.5 mt-0.5">
+                {{ zone.name }}
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                </svg>
+              </a>
+              {% endif %}
+            </td>
+
+            <!-- Type -->
+            <td class="px-4 py-3">
+              {% if zone.zone_kind == 'domain' %}
+              <span class="badge" style="background:#eff6ff;color:#1d4ed8;">Domain</span>
+              {% else %}
+              <span class="badge" style="background:#f1f5f9;color:#475569;">Reverse</span>
+              {% endif %}
+              <span class="text-xs text-slate-400 ml-1">{{ zone.record_type }}</span>
+            </td>
+
+            <!-- Status -->
+            <td class="px-4 py-3">
+              {% if zone.status == '1' %}
+              <span class="inline-flex items-center gap-1 text-xs font-medium text-green-700">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"></span> Active
+              </span>
+              {% else %}
+              <span class="inline-flex items-center gap-1 text-xs font-medium text-slate-400">
+                <span class="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block"></span> Inactive
+              </span>
+              {% endif %}
+            </td>
+
+            <!-- Hosting cross-reference -->
+            <td class="px-4 py-3">
+              {% if zone.is_hosted %}
+              <span class="badge host-{{ zone.hosted_provider | lower }}">{{ zone.hosted_provider }}</span>
+              {% if zone.hosted_assignee %}
+              <div class="text-xs text-slate-400 mt-0.5">{{ zone.hosted_assignee }}</div>
+              {% endif %}
+              {% elif zone.zone_kind == 'domain' %}
+              <span class="text-xs text-amber-600 font-medium">DNS only</span>
+              {% else %}
+              <span class="text-slate-300 text-xs">—</span>
+              {% endif %}
+            </td>
+
+            <!-- Last Modified (from serial) -->
+            <td class="px-4 py-3 text-xs text-slate-500">
+              {{ zone.serial_date or '—' }}
+            </td>
+
+            <!-- View records button -->
+            <td class="px-4 py-3 text-right" onclick="event.stopPropagation()">
+              <button onclick="openRecords('{{ zone.name }}', this.closest('tr'))"
+                      class="text-xs text-sky-600 hover:text-sky-800 hover:underline whitespace-nowrap">
+                View records
+              </button>
+            </td>
+
+          </tr>
+        {% endfor %}
+
+        {% if not zones %}
+          <tr>
+            <td colspan="6" class="px-6 py-20 text-center text-slate-400">
+              <p class="font-medium">No zones found</p>
+              <p class="text-sm mt-1">Click <strong>Sync Zones</strong> to load from ClouDNS.</p>
+            </td>
+          </tr>
+        {% endif %}
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ RECORDS MODAL -->
+<div id="records-modal"
+     class="hidden fixed inset-0 z-50 flex items-center justify-center p-4"
+     onclick="if(event.target===this)closeModal()">
+  <div class="absolute inset-0 bg-black/40"></div>
+  <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col">
+
+    <!-- Modal header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+      <div>
+        <h2 id="modal-title" class="text-lg font-bold text-slate-800">DNS Records</h2>
+        <p id="modal-subtitle" class="text-xs text-slate-400 mt-0.5"></p>
+      </div>
+      <div class="flex items-center gap-3">
+        <a id="modal-link" href="#" target="_blank" rel="noopener"
+           class="text-xs text-sky-600 hover:underline flex items-center gap-0.5">
+          Open site
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+        </a>
+        <button onclick="closeModal()"
+                class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Hosting badge strip -->
+    <div id="modal-hosting" class="hidden px-6 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-600 flex items-center gap-2"></div>
+
+    <!-- Records table -->
+    <div class="overflow-y-auto flex-1 px-6 py-4">
+      <div id="modal-loading" class="flex items-center justify-center py-12 gap-2 text-slate-400">
+        <svg class="spinner w-5 h-5" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+          <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+        </svg>
+        Loading records…
+      </div>
+      <div id="modal-content" class="hidden">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+              <th class="py-2 text-left font-semibold w-20">Type</th>
+              <th class="py-2 text-left font-semibold">Host</th>
+              <th class="py-2 text-left font-semibold">Value</th>
+              <th class="py-2 text-left font-semibold w-16">TTL</th>
+            </tr>
+          </thead>
+          <tbody id="records-body" class="divide-y divide-slate-50"></tbody>
+        </table>
+        <div id="no-records" class="hidden text-center text-slate-400 py-8">No records found.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============================================================ SYNC TOAST -->
+<div id="sync-toast"
+     class="hidden fixed bottom-6 right-6 z-50 bg-slate-900 text-white text-sm
+            rounded-xl shadow-xl px-5 py-3 flex items-center gap-3">
+  <svg id="toast-icon" class="spinner w-4 h-4 text-sky-400 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+    <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+    <path class="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+  </svg>
+  <span id="toast-text">Syncing zones…</span>
+</div>
+
+<script>
+  // ---- Filter / search ----
+  function filterTable() {
+    const query   = document.getElementById('search').value.toLowerCase();
+    const kind    = document.getElementById('type-filter').value;
+    const hosted  = document.getElementById('hosted-filter').value;
+    const status  = document.getElementById('status-filter').value;
+    const rows    = document.querySelectorAll('#zones-body .zone-row');
+    let visible   = 0;
+
+    rows.forEach(row => {
+      const matchSearch  = !query  || row.dataset.name.includes(query);
+      const matchKind    = !kind   || (kind === 'reverse' ? row.dataset.kind !== 'domain' : row.dataset.kind === 'domain');
+      const matchHosted  = !hosted || (hosted === 'hosted' ? row.dataset.hosted === '1' : row.dataset.hosted === '0' && row.dataset.kind === 'domain');
+      const matchStatus  = !status || row.dataset.status === status;
+      const show = matchSearch && matchKind && matchHosted && matchStatus;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+
+    document.getElementById('visible-count').textContent = `Showing ${visible} of {{ zones | length }} zones`;
+  }
+
+  // ---- Stat card filter ----
+  function setFilter(filter) {
+    // Reset all selects
+    document.getElementById('type-filter').value   = '';
+    document.getElementById('hosted-filter').value = '';
+    document.getElementById('status-filter').value = '';
+
+    if (filter === 'domain')   document.getElementById('type-filter').value   = 'domain';
+    if (filter === 'reverse')  document.getElementById('type-filter').value   = 'reverse';
+    if (filter === 'hosted')   document.getElementById('hosted-filter').value = 'hosted';
+    if (filter === 'unhosted') document.getElementById('hosted-filter').value = 'unhosted';
+
+    filterTable();
+
+    document.querySelectorAll('.stat-card').forEach(card => {
+      const active = card.dataset.filter === filter;
+      card.classList.toggle('border-sky-400', active);
+      card.classList.toggle('shadow-md', active);
+      card.classList.toggle('border-transparent', !active);
+    });
+  }
+
+  // ---- Sorting ----
+  let sortCol = '', sortDir = 1;
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      if (sortCol === col) sortDir *= -1;
+      else { sortCol = col; sortDir = 1; }
+      document.querySelectorAll('th[data-sort]').forEach(h => {
+        h.classList.remove('sorted-asc', 'sorted-desc');
+      });
+      th.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
+
+      const tbody = document.getElementById('zones-body');
+      const rows  = [...tbody.querySelectorAll('.zone-row')];
+      rows.sort((a, b) => {
+        const av = (a.dataset[col] || '').toLowerCase();
+        const bv = (b.dataset[col] || '').toLowerCase();
+        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+      });
+      rows.forEach(r => tbody.appendChild(r));
+    });
+  });
+
+  // ---- Records modal ----
+  function openRecords(zoneName, row) {
+    const modal     = document.getElementById('records-modal');
+    const title     = document.getElementById('modal-title');
+    const subtitle  = document.getElementById('modal-subtitle');
+    const link      = document.getElementById('modal-link');
+    const hosting   = document.getElementById('modal-hosting');
+    const loading   = document.getElementById('modal-loading');
+    const content   = document.getElementById('modal-content');
+    const tbody     = document.getElementById('records-body');
+    const noRecs    = document.getElementById('no-records');
+
+    title.textContent    = zoneName;
+    subtitle.textContent = 'Loading DNS records from ClouDNS…';
+    link.href            = `https://${zoneName}`;
+
+    // Hosting badge
+    const isHosted   = row.dataset.hosted === '1';
+    const hostedText = row.querySelector('td:nth-child(4)')?.textContent.trim() || '';
+    if (isHosted && hostedText) {
+      hosting.classList.remove('hidden');
+      hosting.innerHTML = `<span class="font-medium">Hosted on DNHQ:</span> ${hostedText}`;
+    } else if (row.dataset.kind === 'domain') {
+      hosting.classList.remove('hidden');
+      hosting.innerHTML = `<span class="text-amber-600 font-medium">DNS only — not on DNHQ hosting</span>`;
+    } else {
+      hosting.classList.add('hidden');
+    }
+
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    noRecs.classList.add('hidden');
+    tbody.innerHTML = '';
+    modal.classList.remove('hidden');
+
+    fetch(`/domains/records?zone=${encodeURIComponent(zoneName)}`)
+      .then(r => r.json())
+      .then(data => {
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+        const records = data.records || [];
+        subtitle.textContent = `${records.length} record${records.length !== 1 ? 's' : ''}`;
+        if (!records.length) {
+          noRecs.classList.remove('hidden');
+          return;
+        }
+        records.forEach(rec => {
+          const type  = (rec.type || '').toUpperCase();
+          const cls   = `rec-type-${type.toLowerCase()}`;
+          const host  = rec.host || '@';
+          const value = rec.record || '';
+          const ttl   = rec.ttl ? `${rec.ttl}s` : '';
+          const tr = document.createElement('tr');
+          tr.className = 'border-b border-slate-50';
+          tr.innerHTML = `
+            <td class="py-2 pr-4">
+              <span class="badge ${cls} font-mono">${type}</span>
+            </td>
+            <td class="py-2 pr-4 font-mono text-xs text-slate-600 max-w-[160px] truncate" title="${host}">
+              ${host || '@'}
+            </td>
+            <td class="py-2 pr-4 font-mono text-xs text-slate-700 max-w-[300px] break-all">
+              ${value}
+            </td>
+            <td class="py-2 text-xs text-slate-400 whitespace-nowrap">${ttl}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      })
+      .catch(() => {
+        loading.classList.add('hidden');
+        content.classList.remove('hidden');
+        noRecs.classList.remove('hidden');
+        subtitle.textContent = 'Failed to load records.';
+      });
+  }
+
+  function closeModal() {
+    document.getElementById('records-modal').classList.add('hidden');
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+  // ---- Sync zones ----
+  function refreshZones() {
+    const btn  = document.getElementById('refresh-btn');
+    const icon = document.getElementById('refresh-icon');
+    const toast = document.getElementById('sync-toast');
+    const toastText = document.getElementById('toast-text');
+    const toastIcon = document.getElementById('toast-icon');
+
+    btn.disabled = true;
+    icon.classList.add('spinner');
+    toast.classList.remove('hidden');
+    toastText.textContent = 'Syncing zones from ClouDNS…';
+
+    fetch('/domains/refresh', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          toastText.textContent = `✓ Synced ${data.count} zones`;
+          toastIcon.className = 'w-4 h-4 text-green-400 flex-shrink-0';
+          toastIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>';
+          setTimeout(() => { toast.classList.add('hidden'); location.reload(); }, 1500);
+        } else {
+          toastText.textContent = `Error: ${data.error}`;
+          setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+      })
+      .catch(() => {
+        toastText.textContent = 'Sync failed — check connection';
+        setTimeout(() => toast.classList.add('hidden'), 3000);
+      })
+      .finally(() => {
+        btn.disabled = false;
+        icon.classList.remove('spinner');
+      });
+  }
+
+  // ---- Export CSV ----
+  function exportDomainsCSV() {
+    const headers = ['Domain', 'Type', 'Zone Kind', 'Status', 'Hosting', 'Assignee', 'Last Modified'];
+    const rows = [...document.querySelectorAll('#zones-body .zone-row')]
+      .filter(r => r.style.display !== 'none')
+      .map(r => {
+        const cells = r.querySelectorAll('td');
+        return [
+          r.dataset.name,
+          r.dataset.kind,
+          cells[1]?.textContent.trim().split('\n')[0] || '',
+          r.dataset.status === '1' ? 'Active' : 'Inactive',
+          cells[3]?.textContent.trim() || '',
+          '',
+          cells[4]?.textContent.trim() || '',
+        ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+      });
+    const csv  = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href: url, download: 'domains.csv' });
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+</script>
+
+</body>
+</html>
