@@ -74,7 +74,9 @@ def load_config():
     cfg.setdefault('elasticemail', {})
     cfg['elasticemail']['api_key'] = _env('ELASTICEMAIL_API_KEY', cfg['elasticemail'].get('api_key', ''))
 
-    cfg['email_log_password'] = _env('EMAIL_LOG_PASSWORD', cfg.get('email_log_password', ''))
+    cfg['email_log_password']    = _env('EMAIL_LOG_PASSWORD',    cfg.get('email_log_password', ''))
+    cfg['dashboard_username']    = _env('DASHBOARD_USERNAME',    cfg.get('dashboard_username', ''))
+    cfg['dashboard_password']    = _env('DASHBOARD_PASSWORD',    cfg.get('dashboard_password', ''))
 
     return cfg
 
@@ -974,10 +976,30 @@ def do_refresh():
 
 
 # ---------------------------------------------------------------------------
+# Authentication helpers (must be defined before routes)
+# ---------------------------------------------------------------------------
+
+def require_auth(f):
+    """Redirect to /login if the user is not authenticated."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('authed'):
+            return redirect(url_for('login', next=request.url))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_email_auth(f):
+    """Kept for backwards compat — delegates to require_auth."""
+    return require_auth(f)
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @app.route('/')
+@require_auth
 def index():
     with sqlite3.connect(DB_FILE) as conn:
         conn.row_factory = sqlite3.Row
@@ -1112,6 +1134,7 @@ def index():
 
 
 @app.route('/refresh', methods=['POST'])
+@require_auth
 def refresh():
     """Run the fetch synchronously and return the result directly.
     This avoids state-loss when Fly.io auto-stops the machine between the
@@ -1123,11 +1146,13 @@ def refresh():
 
 
 @app.route('/refresh-status')
+@require_auth
 def refresh_status():
     return jsonify(_refresh_state)
 
 
 @app.route('/add-site', methods=['POST'])
+@require_auth
 def add_site():
     domain = request.form.get('domain', '').strip().removeprefix('https://').removeprefix('http://')
     domain = domain.removeprefix('www.').rstrip('/').rstrip('.')
@@ -1196,6 +1221,7 @@ def add_site():
 
 
 @app.route('/delete-site', methods=['POST'])
+@require_auth
 def delete_site():
     domain = request.form.get('domain', '').strip()
     if not domain:
@@ -1219,6 +1245,7 @@ def delete_site():
 # ---------------------------------------------------------------------------
 
 @app.route('/recheck-site', methods=['POST'])
+@require_auth
 def recheck_site():
     domain = request.json.get('domain', '').strip()
     if not domain:
@@ -1355,6 +1382,7 @@ def do_fill_details():
 
 
 @app.route('/backfill-registrars', methods=['POST'])
+@require_auth
 def backfill_registrars():
     if _backfill_state.get('running'):
         return jsonify({'started': False, 'already_running': True})
@@ -1364,11 +1392,13 @@ def backfill_registrars():
 
 
 @app.route('/backfill-registrars-status')
+@require_auth
 def backfill_registrars_status():
     return jsonify(_backfill_state)
 
 
 @app.route('/sync-teamwork', methods=['POST'])
+@require_auth
 def sync_teamwork():
     if _teamwork_state.get('running'):
         return jsonify({'started': False, 'already_running': True})
@@ -1377,6 +1407,7 @@ def sync_teamwork():
 
 
 @app.route('/sync-teamwork-status')
+@require_auth
 def sync_teamwork_status():
     return jsonify(_teamwork_state)
 
@@ -1448,6 +1479,7 @@ def do_check_uptime():
 
 
 @app.route('/check-uptime', methods=['POST'])
+@require_auth
 def check_uptime_route():
     if _uptime_state.get('running'):
         return jsonify({'started': False, 'already_running': True})
@@ -1457,11 +1489,13 @@ def check_uptime_route():
 
 
 @app.route('/check-uptime-status')
+@require_auth
 def check_uptime_status():
     return jsonify(_uptime_state)
 
 
 @app.route('/recheck-uptime', methods=['POST'])
+@require_auth
 def recheck_uptime_route():
     data = request.get_json(force=True)
     domain = (data or {}).get('domain', '').strip()
@@ -1478,6 +1512,7 @@ def recheck_uptime_route():
 
 
 @app.route('/export.csv')
+@require_auth
 def export_csv():
     import csv, io
     with sqlite3.connect(DB_FILE) as conn:
@@ -1511,6 +1546,7 @@ def export_csv():
 # ---------------------------------------------------------------------------
 
 @app.route('/domains')
+@require_auth
 def domains():
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
@@ -1603,6 +1639,7 @@ def domains():
 
 
 @app.route('/domains/refresh', methods=['POST'])
+@require_auth
 def domains_refresh():
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
@@ -1616,6 +1653,7 @@ def domains_refresh():
 
 
 @app.route('/domains/records')
+@require_auth
 def domains_records():
     zone_name = request.args.get('zone', '').strip()
     if not zone_name:
@@ -1629,6 +1667,7 @@ def domains_records():
 
 
 @app.route('/domains/add-record', methods=['POST'])
+@require_auth
 def domains_add_record():
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
@@ -1657,6 +1696,7 @@ def domains_add_record():
 
 
 @app.route('/domains/edit-record', methods=['POST'])
+@require_auth
 def domains_edit_record():
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
@@ -1685,6 +1725,7 @@ def domains_edit_record():
 
 
 @app.route('/domains/delete-record', methods=['POST'])
+@require_auth
 def domains_delete_record():
     config = load_config()
     cloudns_cfg = config.get('cloudns', {})
@@ -1704,38 +1745,41 @@ def domains_delete_record():
 
 
 # ---------------------------------------------------------------------------
+# Site-wide authentication routes
+# ---------------------------------------------------------------------------
 
-def require_email_auth(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get('email_log_authed'):
-            return redirect(url_for('email_login', next=request.url))
-        return f(*args, **kwargs)
-    return decorated
-
-
-@app.route('/email-login', methods=['GET', 'POST'])
-def email_login():
+@app.route('/login', methods=['GET', 'POST'])
+def login():
     error = None
     if request.method == 'POST':
+        username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        cfg = load_config()
-        correct = cfg.get('email_log_password', '')
-        # Constant-time comparison to prevent timing attacks
-        if correct and secrets.compare_digest(password.encode(), correct.encode()):
-            session['email_log_authed'] = True
-            next_url = request.args.get('next') or ''
-            if not next_url or not next_url.startswith('/'):
-                next_url = url_for('email_log')
+        cfg      = load_config()
+        ok_user  = cfg.get('dashboard_username', '')
+        ok_pass  = cfg.get('dashboard_password', '')
+        if (ok_user and ok_pass
+                and secrets.compare_digest(username.encode(), ok_user.encode())
+                and secrets.compare_digest(password.encode(), ok_pass.encode())):
+            session['authed'] = True
+            next_url = request.args.get('next', '')
+            if not next_url or not next_url.startswith('/') or next_url.startswith('//'):
+                next_url = url_for('index')
             return redirect(next_url)
-        error = 'Incorrect password.'
-    return render_template('email_login.html', error=error)
+        error = 'Incorrect username or password.'
+    return render_template('login.html', error=error)
 
 
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# Keep /email-logout as an alias for backwards compat
 @app.route('/email-logout')
 def email_logout():
-    session.pop('email_log_authed', None)
-    return redirect(url_for('email_login'))
+    session.clear()
+    return redirect(url_for('login'))
 
 
 # ---------------------------------------------------------------------------
@@ -1913,6 +1957,7 @@ def _build_email_rows_from_db(from_date='', to_date='', search=''):
 
 @app.route('/emails')
 @require_email_auth
+@require_auth
 def email_log():
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
@@ -1964,6 +2009,7 @@ def email_log():
 
 @app.route('/email-detail/<path:msg_id>')
 @require_email_auth
+@require_auth
 def email_detail(msg_id):
     cfg     = load_config()
     api_key = cfg.get('elasticemail', {}).get('api_key', '')
